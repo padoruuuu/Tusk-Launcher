@@ -4,11 +4,9 @@ use std::{
     path::PathBuf,
 };
 use xdg::BaseDirectories;
-use eframe::egui;
-use eframe::egui::{CentralPanel, Context, ScrollArea, TextEdit, CursorIcon, Layout, Align};
 use rayon::prelude::*;
-use once_cell::sync::Lazy;
 use crate::cache::{update_cache, RECENT_APPS_CACHE};
+use crate::gui_trait::AppInterface;
 
 fn get_desktop_entries() -> Vec<PathBuf> {
     let xdg_dirs = BaseDirectories::new().unwrap();
@@ -80,7 +78,6 @@ pub struct AppLauncher {
     applications: Vec<(String, String)>,
     search_results: Vec<(String, String)>,
     is_quit: bool,
-    focus_set: bool,
 }
 
 impl Default for AppLauncher {
@@ -99,81 +96,71 @@ impl Default for AppLauncher {
             }).take(5).collect(),
             applications,
             is_quit: false,
-            focus_set: false,
         }
     }
 }
 
-impl eframe::App for AppLauncher {
-    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        ctx.request_repaint();
-
+impl AppInterface for AppLauncher {
+    fn update(&mut self) {
         if self.is_quit {
             std::process::exit(0);
         }
+    }
 
-        ctx.input(|i| {
-            if i.key_pressed(egui::Key::Escape) {
+    fn render(&self) -> String {
+        // This method is no longer needed for eframe implementation
+        String::new()
+    }
+
+    fn handle_input(&mut self, input: &str) {
+        match input {
+            "ESC" => self.is_quit = true,
+            "ENTER" => self.launch_first_result(),
+            "P" => crate::power::power_off(),
+            "R" => crate::power::restart(),
+            "L" => crate::power::logout(),
+            _ => {
+                self.query = input.to_string();
+                self.search_results = search_applications(&self.query, &self.applications);
+            }
+        }
+    }
+
+    fn should_quit(&self) -> bool {
+        self.is_quit
+    }
+
+    fn get_query(&self) -> String {
+        self.query.clone()
+    }
+
+    fn get_search_results(&self) -> Vec<String> {
+        self.search_results.iter().map(|(name, _)| name.clone()).collect()
+    }
+
+    fn get_time(&self) -> String {
+        crate::clock::get_current_time()
+    }
+
+    fn launch_app(&mut self, app_name: &str) {
+        if let Some((_, exec_cmd)) = self.search_results.iter().find(|(name, _)| name == app_name) {
+            if let Err(err) = launch_app(app_name, exec_cmd) {
+                eprintln!("Failed to launch app: {}", err);
+            } else {
                 self.is_quit = true;
             }
-            if i.key_pressed(egui::Key::Enter) {
-                if let Some((app_name, exec_cmd)) = self.search_results.first() {
-                    if let Err(err) = launch_app(app_name, exec_cmd) {
-                        eprintln!("Failed to launch app: {}", err);
-                    } else {
-                        self.is_quit = true;
-                    }
-                }
+        }
+    }
+}
+
+impl AppLauncher {
+    fn launch_first_result(&mut self) {
+        if let Some((app_name, exec_cmd)) = self.search_results.first() {
+            if let Err(err) = launch_app(app_name, exec_cmd) {
+                eprintln!("Failed to launch app: {}", err);
+            } else {
+                self.is_quit = true;
             }
-        });
-
-        CentralPanel::default().show(ctx, |ui| {
-            ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                let response = ui.add(TextEdit::singleline(&mut self.query).hint_text("Search..."));
-                
-                if !self.focus_set {
-                    response.request_focus();
-                    self.focus_set = true;
-                }
-
-                if response.changed() {
-                    self.search_results = search_applications(&self.query, &self.applications);
-                }
-
-                ScrollArea::vertical().show(ui, |ui| {
-                    for (app_name, exec_cmd) in &self.search_results {
-                        if ui.button(app_name).clicked() {
-                            if let Err(err) = launch_app(app_name, exec_cmd) {
-                                eprintln!("Failed to launch app: {}", err);
-                            } else {
-                                self.is_quit = true;
-                            }
-                        }
-                    }
-                });
-            });
-
-            ui.add_space(ui.available_height() - 100.0);
-
-            ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("Power").clicked() {
-                        crate::power::power_off();
-                    }
-                    if ui.button("Restart").clicked() {
-                        crate::power::restart();
-                    }
-                    if ui.button("Logout").clicked() {
-                        crate::power::logout();
-                    }
-                });
-
-                ui.separator();
-
-                ui.label(crate::clock::get_current_time());
-            });
-        });
-
-        ctx.output_mut(|o| o.cursor_icon = CursorIcon::Default);
+        }
     }
 }

@@ -2,17 +2,14 @@ mod clock;
 mod power;
 mod cache;
 mod app_launcher;
+mod gui_trait;
+mod eframe_impl;
 
-use eframe::egui;
+use gui_trait::GuiFramework;
+use eframe_impl::EframeGui;
 use app_launcher::AppLauncher;
 
-fn main() -> eframe::Result<()> {
-    let native_options = eframe::NativeOptions {
-        ..Default::default()
-    };
-    eframe::run_native(
-        "Application Launcher",
-        native_options,
-        Box::new(|_cc| Box::new(AppLauncher::default())),
-    )
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = Box::new(AppLauncher::default());
+    EframeGui::run(app)
 }
