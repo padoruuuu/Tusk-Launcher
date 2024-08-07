@@ -24,45 +24,43 @@ struct EframeWrapper(Box<dyn AppInterface>);
 impl eframe::App for EframeWrapper {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.0.update();
-        
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 // Search bar
                 let mut query = self.0.get_query();
-                ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search..."));
-                if query != self.0.get_query() {
+                if ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search...")).changed() {
                     self.0.handle_input(&query);
                 }
                 
                 ui.add_space(10.0);
-                
+
                 // Search results
                 for result in self.0.get_search_results() {
                     if ui.button(&result).clicked() {
                         self.0.launch_app(&result);
                     }
                 }
-                
-                // Push everything else to the bottom
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                    // Power, Restart, Logout buttons
-                    ui.horizontal(|ui| {
-                        if ui.button("Power").clicked() {
-                            self.0.handle_input("P");
-                        }
-                        if ui.button("Restart").clicked() {
-                            self.0.handle_input("R");
-                        }
-                        if ui.button("Logout").clicked() {
-                            self.0.handle_input("L");
-                        }
-                    });
-                    
-                    ui.add_space(5.0);
-                    
-                    // Time display
-                    ui.label(self.0.get_time());
+            });
+
+            // Push everything else to the bottom
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                // Power, Restart, Logout buttons
+                ui.horizontal(|ui| {
+                    if ui.button("Power").clicked() {
+                        self.0.handle_input("P");
+                    }
+                    if ui.button("Restart").clicked() {
+                        self.0.handle_input("R");
+                    }
+                    if ui.button("Logout").clicked() {
+                        self.0.handle_input("L");
+                    }
                 });
+
+                ui.add_space(5.0);
+
+                // Time display
+                ui.label(self.0.get_time());
             });
         });
 
@@ -74,6 +72,7 @@ impl eframe::App for EframeWrapper {
         }
 
         if self.0.should_quit() {
+            ctx.request_repaint(); // Ensure the UI is updated immediately
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
