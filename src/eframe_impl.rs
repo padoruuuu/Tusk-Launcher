@@ -13,31 +13,45 @@ impl GuiFramework for EframeGui {
         eframe::run_native(
             "Application Launcher",
             native_options,
-            Box::new(|_cc| Box::new(EframeWrapper(app))),
+            Box::new(|_cc| Box::new(EframeWrapper {
+                app,
+                focused: false,
+            })),
         )?;
         Ok(())
     }
 }
 
-struct EframeWrapper(Box<dyn AppInterface>);
+struct EframeWrapper {
+    app: Box<dyn AppInterface>,
+    focused: bool,
+}
 
 impl eframe::App for EframeWrapper {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.0.update();
+        self.app.update();
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 // Search bar
-                let mut query = self.0.get_query();
-                if ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search...")).changed() {
-                    self.0.handle_input(&query);
+                let mut query = self.app.get_query();
+                let search_response = ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search..."));
+
+                // Request focus on the search bar if not yet focused
+                if !self.focused {
+                    search_response.request_focus();
+                    self.focused = true;
+                }
+
+                if search_response.changed() {
+                    self.app.handle_input(&query);
                 }
                 
                 ui.add_space(10.0);
 
                 // Search results
-                for result in self.0.get_search_results() {
+                for result in self.app.get_search_results() {
                     if ui.button(&result).clicked() {
-                        self.0.launch_app(&result);
+                        self.app.launch_app(&result);
                     }
                 }
             });
@@ -47,31 +61,31 @@ impl eframe::App for EframeWrapper {
                 // Power, Restart, Logout buttons
                 ui.horizontal(|ui| {
                     if ui.button("Power").clicked() {
-                        self.0.handle_input("P");
+                        self.app.handle_input("P");
                     }
                     if ui.button("Restart").clicked() {
-                        self.0.handle_input("R");
+                        self.app.handle_input("R");
                     }
                     if ui.button("Logout").clicked() {
-                        self.0.handle_input("L");
+                        self.app.handle_input("L");
                     }
                 });
 
                 ui.add_space(5.0);
 
                 // Time display
-                ui.label(self.0.get_time());
+                ui.label(self.app.get_time());
             });
         });
 
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.0.handle_input("ESC");
+            self.app.handle_input("ESC");
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-            self.0.handle_input("ENTER");
+            self.app.handle_input("ENTER");
         }
 
-        if self.0.should_quit() {
+        if self.app.should_quit() {
             ctx.request_repaint(); // Ensure the UI is updated immediately
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
