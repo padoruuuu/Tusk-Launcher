@@ -29,7 +29,10 @@ pub static RECENT_APPS_CACHE: Lazy<Mutex<RecentAppsCache>> = Lazy::new(|| {
     }
 });
 
-pub fn update_cache(app_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn update_cache(app_name: &str, enable_recent_apps: bool) -> Result<(), Box<dyn std::error::Error>> {
+    if !enable_recent_apps {
+        return Ok(());
+    }
     let mut cache = RECENT_APPS_CACHE.lock().map_err(|e| format!("Lock error: {:?}", e))?;
     cache.recent_apps.retain(|x| x != app_name);
     cache.recent_apps.push_front(app_name.to_string());

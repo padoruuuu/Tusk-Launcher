@@ -6,7 +6,8 @@ use std::{
 use xdg::BaseDirectories;
 use rayon::prelude::*;
 use crate::cache::{update_cache, RECENT_APPS_CACHE};
-use crate::gui_trait::AppInterface;
+use crate::gui::AppInterface;
+use crate::config::{Config, load_config, get_current_time_in_timezone};
 
 fn get_desktop_entries() -> Vec<PathBuf> {
     let xdg_dirs = BaseDirectories::new().unwrap();
@@ -53,16 +54,16 @@ fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String)> {
     })
 }
 
-fn search_applications(query: &str, applications: &[(String, String)]) -> Vec<(String, String)> {
+fn search_applications(query: &str, applications: &[(String, String)], max_results: usize) -> Vec<(String, String)> {
     applications.iter()
         .filter(|(name, _)| name.to_lowercase().contains(&query.to_lowercase()))
         .cloned()
-        .take(5)
+        .take(max_results)
         .collect()
 }
 
-fn launch_app(app_name: &str, exec_cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
-    update_cache(app_name)?;
+fn launch_app(app_name: &str, exec_cmd: &str, enable_recent_apps: bool) -> Result<(), Box<dyn std::error::Error>> {
+    update_cache(app_name, enable_recent_apps)?;
 
     let home_dir = dirs::home_dir().ok_or("Failed to find home directory")?;
     Command::new("sh")
@@ -78,24 +79,32 @@ pub struct AppLauncher {
     applications: Vec<(String, String)>,
     search_results: Vec<(String, String)>,
     is_quit: bool,
+    config: Config,
 }
 
 impl Default for AppLauncher {
     fn default() -> Self {
+        let config = load_config();
         let applications: Vec<(String, String)> = get_desktop_entries()
             .par_iter()
             .filter_map(|path| parse_desktop_entry(path))
             .collect();
 
-        let recent_apps_cache = RECENT_APPS_CACHE.lock().expect("Failed to acquire read lock");
+        let search_results = if config.enable_recent_apps {
+            let recent_apps_cache = RECENT_APPS_CACHE.lock().expect("Failed to acquire read lock");
+            recent_apps_cache.recent_apps.iter().filter_map(|app_name| {
+                applications.iter().find(|(name, _)| name == app_name).cloned()
+            }).take(config.max_search_results).collect()
+        } else {
+            Vec::new()
+        };
 
         Self {
             query: String::new(),
-            search_results: recent_apps_cache.recent_apps.iter().filter_map(|app_name| {
-                applications.iter().find(|(name, _)| name == app_name).cloned()
-            }).take(5).collect(),
+            search_results,
             applications,
             is_quit: false,
+            config,
         }
     }
 }
@@ -107,21 +116,16 @@ impl AppInterface for AppLauncher {
         }
     }
 
-    fn render(&self) -> String {
-        // This method is no longer needed for eframe implementation
-        String::new()
-    }
-
     fn handle_input(&mut self, input: &str) {
         match input {
             "ESC" => self.is_quit = true,
             "ENTER" => self.launch_first_result(),
-            "P" => crate::power::power_off(),
-            "R" => crate::power::restart(),
-            "L" => crate::power::logout(),
+            "P" if self.config.enable_power_options => crate::power::power_off(),
+            "R" if self.config.enable_power_options => crate::power::restart(),
+            "L" if self.config.enable_power_options => crate::power::logout(),
             _ => {
                 self.query = input.to_string();
-                self.search_results = search_applications(&self.query, &self.applications);
+                self.search_results = search_applications(&self.query, &self.applications, self.config.max_search_results);
             }
         }
     }
@@ -139,24 +143,28 @@ impl AppInterface for AppLauncher {
     }
 
     fn get_time(&self) -> String {
-        crate::clock::get_current_time()
+        get_current_time_in_timezone(&self.config)
     }
 
     fn launch_app(&mut self, app_name: &str) {
         if let Some((_, exec_cmd)) = self.search_results.iter().find(|(name, _)| name == app_name) {
-            if let Err(err) = launch_app(app_name, exec_cmd) {
+            if let Err(err) = launch_app(app_name, exec_cmd, self.config.enable_recent_apps) {
                 eprintln!("Failed to launch app: {}", err);
             } else {
                 self.is_quit = true;
             }
         }
     }
+
+    fn get_config(&self) -> &Config {
+        &self.config
+    }
 }
 
 impl AppLauncher {
     fn launch_first_result(&mut self) {
         if let Some((app_name, exec_cmd)) = self.search_results.first() {
-            if let Err(err) = launch_app(app_name, exec_cmd) {
+            if let Err(err) = launch_app(app_name, exec_cmd, self.config.enable_recent_apps) {
                 eprintln!("Failed to launch app: {}", err);
             } else {
                 self.is_quit = true;
