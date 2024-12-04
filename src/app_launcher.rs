@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs,
     process::Command,
     path::PathBuf,
@@ -32,32 +33,36 @@ fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String)> {
     let mut exec = None;
     for line in content.lines() {
         if line.starts_with("Name=") {
-            name = Some(line[5..].to_string());
+            name = Some(line[5..].trim().to_string());
         } else if line.starts_with("Exec=") {
-            exec = Some(line[5..].to_string());
+            exec = Some(line[5..].trim().to_string());
         }
         if name.is_some() && exec.is_some() {
             break;
         }
     }
     name.zip(exec).map(|(name, exec)| {
-        let cleaned_exec = exec.replace("%f", "")
-            .replace("%u", "")
-            .replace("%U", "")
-            .replace("%F", "")
-            .replace("%i", "")
-            .replace("%c", "")
-            .replace("%k", "")
-            .trim()
-            .to_string();
+        let placeholders = ["%f", "%u", "%U", "%F", "%i", "%c", "%k"];
+        let cleaned_exec = placeholders.iter().fold(exec, |acc, &placeholder| 
+            acc.replace(placeholder, "")
+        ).trim().to_string();
         (name, cleaned_exec)
     })
 }
 
 fn search_applications(query: &str, applications: &[(String, String)], max_results: usize) -> Vec<(String, String)> {
+    let query = query.to_lowercase();
+    let mut unique_results = HashSet::new();
+    
     applications.iter()
-        .filter(|(name, _)| name.to_lowercase().contains(&query.to_lowercase()))
-        .cloned()
+        .filter(|(name, _)| name.to_lowercase().contains(&query))
+        .filter_map(|(name, exec)| {
+            if unique_results.insert(name.clone()) {
+                Some((name.clone(), exec.clone()))
+            } else {
+                None
+            }
+        })
         .take(max_results)
         .collect()
 }
@@ -92,9 +97,14 @@ impl Default for AppLauncher {
 
         let search_results = if config.enable_recent_apps {
             let recent_apps_cache = RECENT_APPS_CACHE.lock().expect("Failed to acquire read lock");
-            recent_apps_cache.recent_apps.iter().filter_map(|app_name| {
-                applications.iter().find(|(name, _)| name == app_name).cloned()
-            }).take(config.max_search_results).collect()
+            recent_apps_cache.recent_apps.iter()
+                .filter_map(|app_name| {
+                    applications.iter()
+                        .find(|(name, _)| name == app_name)
+                        .cloned()
+                })
+                .take(config.max_search_results)
+                .collect()
         } else {
             Vec::new()
         };

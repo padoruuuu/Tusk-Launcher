@@ -2,10 +2,9 @@ use std::fs;
 use std::path::PathBuf;
 use serde::{Serialize, Deserialize};
 use once_cell::sync::Lazy;
-use chrono_tz::Tz;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local};
 
-static CONFIG_FILE: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("conf.conf"));
+static CONFIG_FILE: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("config.toml"));
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -13,7 +12,15 @@ pub struct Config {
     pub max_search_results: usize,
     pub enable_power_options: bool,
     pub show_time: bool,
-    pub timezone: Option<String>,  // New field for timezone
+    pub time_format: String,
+    pub time_order: TimeOrder,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub enum TimeOrder {
+    MdyHms,  // Month/Day/Year Hours:Minutes:Seconds
+    YmdHms,  // Year/Month/Day Hours:Minutes:Seconds
+    DmyHms,  // Day/Month/Year Hours:Minutes:Seconds
 }
 
 impl Default for Config {
@@ -23,7 +30,8 @@ impl Default for Config {
             max_search_results: 5,
             enable_power_options: true,
             show_time: true,
-            timezone: Some("UTC".to_string()),  // Default to UTC
+            time_format: "%I:%M %p".to_string(),
+            time_order: TimeOrder::MdyHms,
         }
     }
 }
@@ -48,20 +56,21 @@ pub fn save_config(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// Function to get current time in the configured timezone
+// Retained for backwards compatibility with existing code
 pub fn get_current_time_in_timezone(config: &Config) -> String {
-    let now_utc: DateTime<Utc> = Utc::now();
+    let datetime: DateTime<Local> = Local::now();
+    format_datetime(&datetime, config)
+}
 
-    // Check if the config contains a valid timezone
-    if let Some(tz_str) = &config.timezone {
-        if let Ok(timezone) = tz_str.parse::<Tz>() {
-            let now_in_tz = now_utc.with_timezone(&timezone);
-            return now_in_tz.format("%Y-%m-%d %H:%M:%S").to_string();
-        } else {
-            eprintln!("Invalid timezone in config: {}", tz_str);
-        }
-    }
+// Helper function to format datetime based on config
+pub fn format_datetime(datetime: &DateTime<Local>, config: &Config) -> String {
+    let date_part = match config.time_order {
+        TimeOrder::MdyHms => datetime.format("%m/%d/%Y").to_string(),
+        TimeOrder::YmdHms => datetime.format("%Y/%m/%d").to_string(),
+        TimeOrder::DmyHms => datetime.format("%d/%m/%Y").to_string(),
+    };
 
-    // Fallback to UTC if the timezone is invalid or not provided
-    now_utc.format("%Y-%m-%d %H:%M:%S").to_string()
+    let time_part = datetime.format(&config.time_format).to_string();
+
+    format!("{} {}", time_part, date_part)
 }
