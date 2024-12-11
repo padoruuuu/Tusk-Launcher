@@ -1,6 +1,7 @@
 use std::error::Error;
 use eframe::egui;
 use crate::config::Config;
+use crate::app_launcher::AppLaunchOptions;
 
 pub trait GuiFramework {
     fn run(app: Box<dyn AppInterface>) -> Result<(), Box<dyn Error>>;
@@ -15,6 +16,10 @@ pub trait AppInterface {
     fn get_time(&self) -> String;
     fn launch_app(&mut self, app_name: &str);
     fn get_config(&self) -> &Config;
+    
+    // New methods for launch options
+    fn start_launch_options_edit(&mut self, app_name: &str) -> String;
+    fn get_launch_options(&self, app_name: &str) -> Option<&AppLaunchOptions>;
 }
 
 pub struct EframeGui;
@@ -23,7 +28,7 @@ impl GuiFramework for EframeGui {
     fn run(app: Box<dyn AppInterface>) -> Result<(), Box<dyn std::error::Error>> {
         let native_options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
-                .with_inner_size([300.0, 400.0])
+                .with_inner_size([350.0, 500.0])  // Slightly wider to accommodate launch options
                 .with_always_on_top()
                 .with_decorations(true)
                 .with_transparent(false),
@@ -37,6 +42,8 @@ impl GuiFramework for EframeGui {
                 Box::new(EframeWrapper {
                     app,
                     focused: false,
+                    launch_options_input: String::new(),
+                    editing_app: None,
                 })
             }),
         )?;
@@ -47,6 +54,8 @@ impl GuiFramework for EframeGui {
 struct EframeWrapper {
     app: Box<dyn AppInterface>,
     focused: bool,
+    launch_options_input: String,
+    editing_app: Option<String>,
 }
 
 impl eframe::App for EframeWrapper {
@@ -63,14 +72,19 @@ impl eframe::App for EframeWrapper {
                     self.focused = true;
                 }
 
-                if search_response.changed() {
+                if search_response.changed() && !query.starts_with("LAUNCH_OPTIONS:") {
                     self.app.handle_input(&query);
                 }
 
                 ui.add_space(10.0);
 
-                // Display search results
+                // Display search results with launch options buttons
                 self.display_search_results(ui);
+
+                // Launch options editing window (if active)
+                if self.editing_app.is_some() {
+                    self.display_launch_options_edit(ui);
+                }
 
                 // Bottom panel for power options and time
                 self.display_bottom_panel(ui);
@@ -79,10 +93,21 @@ impl eframe::App for EframeWrapper {
 
         // Handle key presses
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.app.handle_input("ESC");
+            if self.editing_app.is_some() {
+                self.editing_app = None;
+            } else {
+                self.app.handle_input("ESC");
+            }
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-            self.app.handle_input("ENTER");
+            if self.editing_app.is_some() {
+                let app_name = self.editing_app.take().unwrap();
+                let save_input = format!("LAUNCH_OPTIONS:{}:{}", app_name, self.launch_options_input);
+                self.app.handle_input(&save_input);
+                self.launch_options_input = String::new(); // Reset input
+            } else {
+                self.app.handle_input("ENTER");
+            }
         }
 
         // Handle quit request
@@ -96,10 +121,58 @@ impl eframe::App for EframeWrapper {
 impl EframeWrapper {
     fn display_search_results(&mut self, ui: &mut egui::Ui) {
         for result in self.app.get_search_results() {
-            if ui.button(&result).clicked() {
-                self.app.launch_app(&result);
-            }
+            ui.horizontal(|ui| {
+                // App launch button
+                if ui.button(&result).clicked() {
+                    self.app.launch_app(&result);
+                }
+
+                // Launch options button
+                if ui.button("⚙").clicked() {
+                    // Temporarily take ownership to resolve borrowing
+                    let formatted_options = {
+                        // First check if launch options exist
+                        let has_options = self.app.get_launch_options(&result).is_some();
+                        
+                        // If options exist, get formatted options
+                        if has_options {
+                            // Clone the result to avoid borrowing conflicts
+                            let result_clone = result.clone();
+                            self.app.start_launch_options_edit(&result_clone)
+                        } else {
+                            String::new()
+                        }
+                    };
+
+                    self.editing_app = Some(result.clone());
+                    self.launch_options_input = formatted_options;
+                }
+            });
         }
+    }
+
+    fn display_launch_options_edit(&mut self, ui: &mut egui::Ui) {
+        let app_name = self.editing_app.as_ref().unwrap();
+        
+        egui::Window::new(format!("Launch Options for {}", app_name))
+            .collapsible(false)
+            .show(ui.ctx(), |ui| {
+                ui.label("Enter launch command (format: command;;working_directory;;env_vars):");
+                ui.text_edit_singleline(&mut self.launch_options_input);
+                
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        let app_name = self.editing_app.take().unwrap();
+                        let save_input = format!("LAUNCH_OPTIONS:{}:{}", app_name, self.launch_options_input);
+                        self.app.handle_input(&save_input);
+                        self.launch_options_input = String::new(); // Reset input
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.editing_app = None;
+                        self.launch_options_input = String::new(); // Reset input
+                    }
+                });
+            });
     }
 
     fn display_bottom_panel(&mut self, ui: &mut egui::Ui) {
@@ -111,7 +184,6 @@ impl EframeWrapper {
             if config.enable_power_options {
                 ui.horizontal(|ui| {
                     if ui.button("Power").clicked() {
-                        // Now we can safely borrow `self` mutably here
                         self.app.handle_input("P");
                     }
                     if ui.button("Restart").clicked() {
