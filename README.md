@@ -1,4 +1,4 @@
-# RustRocket
+# Tusk-Launcher
 A Blazing fast application launcher for wlroots based wayland compositors written in rust.
 
 for use in sway add this to your config: for_window [title="Application Launcher"] floating enable, resize set 300 200, move position center
@@ -7,7 +7,7 @@ for use in sway add this to your config: for_window [title="Application Launcher
 ![image](https://github.com/user-attachments/assets/8c53b192-1d0f-45de-85e9-cef055f1d353)
 ![image](https://github.com/user-attachments/assets/acc5f17b-36ae-4344-bf08-5b71d883e1f9)
 
-RustRocket Installation Arch Linux
+Tusk-Launcher Installation Arch Linux
 Prerequisites
 
 Install Rust and Cargo. Ensure you have Rust installed. The easiest way on Arch is via the AUR package rustup.
@@ -18,9 +18,9 @@ rustup default stable
 
 Clone the Repository
 
-Download the RustRocket repository:
-git clone https://github.com/padoruuuu/RustRocket.git  
-cd RustRocket  
+Download the Tusk-Launcher repository:
+git clone https://github.com/padoruuuu/Tusk-Launcher.git  
+cd Tusk-Launcher  
 
 Building and Running
 Build the Project
@@ -32,7 +32,7 @@ Run the Application
 
 Run the binary:
 
-./target/release/rustrocket  
+./target/release/Tusk-Launcher  
 
 Global Installation (Optional)
 
