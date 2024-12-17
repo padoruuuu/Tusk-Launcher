@@ -136,7 +136,6 @@ pub struct AppLauncher {
     is_quit: bool,
     config: Config,
     launch_options: HashMap<String, AppLaunchOptions>,
-    editing_launch_options: Option<String>,
 }
 
 impl Default for AppLauncher {
@@ -170,7 +169,6 @@ impl Default for AppLauncher {
             is_quit: false,
             config,
             launch_options,
-            editing_launch_options: None,
         }
     }
 }
