@@ -1,5 +1,5 @@
 # Tusk-Launcher
-A Blazing fast application launcher for wlroots based wayland compositors written in rust.
+The name is a combination of "taskbar," "Rust," and "launcher." The goal is to create a taskbar replacement that doesn’t need to be constantly visible but doubles as an app launcher. This design choice ensures that your taskbar replacement is integrated into a form you’ll frequently interact with, resulting in a more efficient and compact experience. While it's primarily aimed at tiling window manager users, it’s versatile enough to be used in any environment.
 
 for use in sway add this to your config: for_window [title="Application Launcher"] floating enable, resize set 300 200, move position center
 
