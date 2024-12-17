@@ -7,13 +7,21 @@ While it's primarily aimed at tiling window manager users, it’s versatile enou
 ![image](https://github.com/user-attachments/assets/8c53b192-1d0f-45de-85e9-cef055f1d353)
 ![image](https://github.com/user-attachments/assets/acc5f17b-36ae-4344-bf08-5b71d883e1f9)
 
+
 TODO:
 tray icons ❌
 volume slider ❌
 css customization ❌
 config file ✅
 
+
+
+
 for use in sway add this to your config: for_window [title="Application Launcher"] floating enable, resize set 300 200, move position center
+
+
+
+
 
 Tusk-Launcher Installation Arch Linux
 Prerequisites
