@@ -14,6 +14,9 @@ pub struct Config {
     pub show_time: bool,
     pub time_format: String,
     pub time_order: TimeOrder,
+    pub power_commands: Vec<String>,
+    pub restart_commands: Vec<String>,
+    pub logout_commands: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -32,6 +35,24 @@ impl Default for Config {
             show_time: true,
             time_format: "%I:%M %p".to_string(),
             time_order: TimeOrder::MdyHms,
+            power_commands: vec![
+                "systemctl poweroff".to_string(),
+                "loginctl poweroff".to_string(),
+                "poweroff".to_string(),
+                "halt".to_string(),
+            ],
+            restart_commands: vec![
+                "systemctl reboot".to_string(),
+                "loginctl reboot".to_string(),
+                "reboot".to_string(),
+            ],
+            logout_commands: vec![
+                "loginctl terminate-session $XDG_SESSION_ID".to_string(),
+                "hyprctl dispatch exit".to_string(),
+                "swaymsg exit".to_string(),
+                "gnome-session-quit --logout --no-prompt".to_string(),
+                "qdbus org.kde.ksmserver /KSMServer logout 0 0 0".to_string(),
+            ],
         }
     }
 }
@@ -56,13 +77,11 @@ pub fn save_config(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// Retained for backwards compatibility with existing code
 pub fn get_current_time_in_timezone(config: &Config) -> String {
     let datetime: DateTime<Local> = Local::now();
     format_datetime(&datetime, config)
 }
 
-// Helper function to format datetime based on config
 pub fn format_datetime(datetime: &DateTime<Local>, config: &Config) -> String {
     let date_part = match config.time_order {
         TimeOrder::MdyHms => datetime.format("%m/%d/%Y").to_string(),

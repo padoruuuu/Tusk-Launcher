@@ -202,9 +202,10 @@ impl AppInterface for AppLauncher {
         match input {
             "ESC" => self.is_quit = true,
             "ENTER" => self.launch_first_result(),
-            "P" if self.config.enable_power_options => crate::power::power_off(),
-            "R" if self.config.enable_power_options => crate::power::restart(),
-            "L" if self.config.enable_power_options => crate::power::logout(),
+            "P" if self.config.enable_power_options => crate::power::power_off(&self.config),
+            "R" if self.config.enable_power_options => crate::power::restart(&self.config),
+            "L" if self.config.enable_power_options => crate::power::logout(&self.config),
+
             _ => {
                 self.query = input.to_string();
                 self.search_results = search_applications(&self.query, &self.applications, self.config.max_search_results);

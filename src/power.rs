@@ -1,69 +1,49 @@
 use std::process::Command;
-use std::path::Path;
 use std::env;
+use crate::config::Config;
 
-const POWER_COMMANDS: [(&str, &[&str]); 4] = [
-    ("systemctl", &["poweroff"]),
-    ("shutdown", &["-h", "now"]),
-    ("poweroff", &[]),
-    ("halt", &[]),
-];
+fn try_command(command_str: &str) -> bool {
+    // Replace $XDG_SESSION_ID with actual session ID if present
+    let command_str = if command_str.contains("$XDG_SESSION_ID") {
+        if let Ok(session_id) = env::var("XDG_SESSION_ID") {
+            command_str.replace("$XDG_SESSION_ID", &session_id)
+        } else {
+            return false;
+        }
+    } else {
+        command_str.to_string()
+    };
 
-const RESTART_COMMANDS: [(&str, &[&str]); 3] = [
-    ("systemctl", &["reboot"]),
-    ("reboot", &[]),
-    ("shutdown", &["-r", "now"]),
-];
-
-const LOGOUT_COMMANDS: [(&str, &[&str]); 5] = [
-    ("hyprctl", &["dispatch", "exit"]),
-    ("swaymsg", &["exit"]),
-    ("gnome-session-quit", &["--logout", "--no-prompt"]),
-    ("qdbus", &["org.kde.KSMServer", "/KSMServer", "logout", "0", "0", "0"]),
-    ("loginctl", &["terminate-session", "$XDG_SESSION_ID"]),
-];
-
-fn command_exists(cmd: &str) -> bool {
-    ["/usr/bin/", "/bin/", "/usr/local/bin/"]
-        .iter()
-        .any(|path| Path::new(&format!("{}{}", path, cmd)).exists())
-}
-
-fn try_commands(commands: &[(&str, &[&str])]) -> bool {
-    commands.iter().any(|(cmd, args)| 
-        command_exists(cmd) && 
-        Command::new(cmd).args(*args).spawn().is_ok()
-    )
-}
-
-fn desktop_specific_logout() -> bool {
-    env::var("XDG_CURRENT_DESKTOP")
-        .map(|session| match session.as_str() {
-            "Hyprland" => command_exists("hyprctl") && 
-                Command::new("hyprctl").args(&["dispatch", "exit"]).spawn().is_ok(),
-            "GNOME" => command_exists("gnome-session-quit") && 
-                Command::new("gnome-session-quit").args(&["--logout", "--no-prompt"]).spawn().is_ok(),
-            "KDE" => command_exists("qdbus") && 
-                Command::new("qdbus").args(&["org.kde.KSMServer", "/KSMServer", "logout", "0", "0", "0"]).spawn().is_ok(),
-            _ => false
-        })
-        .unwrap_or(false)
-}
-
-pub fn power_off() {
-    if !try_commands(&POWER_COMMANDS) {
-        eprintln!("Failed to power off: No known command available");
+    // Split command string into program and arguments
+    let mut parts = command_str.split_whitespace();
+    if let Some(program) = parts.next() {
+        Command::new(program)
+            .args(parts)
+            .spawn()
+            .is_ok()
+    } else {
+        false
     }
 }
 
-pub fn restart() {
-    if !try_commands(&RESTART_COMMANDS) {
-        eprintln!("Failed to restart: No known command available");
+fn try_commands(commands: &[String]) -> bool {
+    commands.iter().any(|cmd| try_command(cmd))
+}
+
+pub fn power_off(config: &Config) {
+    if !try_commands(&config.power_commands) {
+        eprintln!("Failed to power off: No working power off commands found in config");
     }
 }
 
-pub fn logout() {
-    if desktop_specific_logout() || !try_commands(&LOGOUT_COMMANDS) {
-        eprintln!("Failed to logout: No known command available");
+pub fn restart(config: &Config) {
+    if !try_commands(&config.restart_commands) {
+        eprintln!("Failed to restart: No working restart commands found in config");
+    }
+}
+
+pub fn logout(config: &Config) {
+    if !try_commands(&config.logout_commands) {
+        eprintln!("Failed to logout: No working logout commands found in config");
     }
 }
