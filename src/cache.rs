@@ -3,10 +3,9 @@ use std::collections::VecDeque;
 use std::fs;
 use std::path::PathBuf;
 use serde::{Serialize, Deserialize};
-use bincode::{serialize, deserialize};
 use once_cell::sync::Lazy;
 
-static RECENT_APPS_FILE: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("recent_apps.bin"));
+static RECENT_APPS_FILE: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("recent_apps.toml"));
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct RecentAppsCache {
@@ -14,16 +13,16 @@ pub struct RecentAppsCache {
 }
 
 fn save_cache<T: Serialize>(file: &PathBuf, cache: &T) -> Result<(), Box<dyn std::error::Error>> {
-    let data = serialize(cache)?;
-    fs::write(file, data)?;
+    let toml_string = toml::to_string_pretty(cache)?;
+    fs::write(file, toml_string)?;
     Ok(())
 }
 
 pub static RECENT_APPS_CACHE: Lazy<Mutex<RecentAppsCache>> = Lazy::new(|| {
     if RECENT_APPS_FILE.exists() {
-        let data = fs::read(&*RECENT_APPS_FILE).expect("Failed to read recent apps file");
-        let recent_apps: VecDeque<String> = deserialize(&data).expect("Failed to deserialize recent apps data");
-        Mutex::new(RecentAppsCache { recent_apps })
+        let data = fs::read_to_string(&*RECENT_APPS_FILE).expect("Failed to read recent apps file");
+        let cache: RecentAppsCache = toml::from_str(&data).expect("Failed to deserialize recent apps data");
+        Mutex::new(cache)
     } else {
         Mutex::new(RecentAppsCache { recent_apps: VecDeque::new() })
     }

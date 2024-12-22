@@ -4,7 +4,7 @@ use serde::{Serialize, Deserialize};
 use once_cell::sync::Lazy;
 use chrono::{DateTime, Local};
 
-static CONFIG_FILE: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("config.json"));
+static CONFIG_FILE: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("config.toml"));
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -60,7 +60,7 @@ impl Default for Config {
 pub fn load_config() -> Config {
     if CONFIG_FILE.exists() {
         let content = fs::read_to_string(&*CONFIG_FILE).expect("Failed to read config file");
-        serde_json::from_str(&content).unwrap_or_else(|_| {
+        toml::from_str(&content).unwrap_or_else(|_| {
             eprintln!("Failed to parse config file. Using default configuration.");
             Config::default()
         })
@@ -72,7 +72,7 @@ pub fn load_config() -> Config {
 }
 
 pub fn save_config(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
-    let content = serde_json::to_string_pretty(config)?;
+    let content = toml::to_string_pretty(config)?;
     fs::write(&*CONFIG_FILE, content)?;
     Ok(())
 }
