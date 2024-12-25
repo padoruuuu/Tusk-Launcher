@@ -4,6 +4,7 @@ mod cache;
 mod app_launcher;
 mod gui;
 mod config;
+mod audio;
 
 use app_launcher::AppLauncher;
 use crate::gui::{EframeGui, GuiFramework};

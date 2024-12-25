@@ -2,6 +2,7 @@ use std::error::Error;
 use eframe::egui;
 use crate::config::Config;
 use crate::app_launcher::AppLaunchOptions;
+use crate::audio::AudioController;
 
 pub trait GuiFramework {
     fn run(app: Box<dyn AppInterface>) -> Result<(), Box<dyn Error>>;
@@ -16,8 +17,6 @@ pub trait AppInterface {
     fn get_time(&self) -> String;
     fn launch_app(&mut self, app_name: &str);
     fn get_config(&self) -> &Config;
-    
-    // New methods for launch options
     fn start_launch_options_edit(&mut self, app_name: &str) -> String;
     fn get_launch_options(&self, app_name: &str) -> Option<&AppLaunchOptions>;
 }
@@ -28,12 +27,15 @@ impl GuiFramework for EframeGui {
     fn run(app: Box<dyn AppInterface>) -> Result<(), Box<dyn std::error::Error>> {
         let native_options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
-                .with_inner_size([350.0, 500.0])  // Slightly wider to accommodate launch options
+                .with_inner_size([350.0, 500.0])
                 .with_always_on_top()
                 .with_decorations(true)
                 .with_transparent(false),
             ..Default::default()
         };
+        
+        let audio_controller = AudioController::new()?;
+        
         eframe::run_native(
             "Application Launcher",
             native_options,
@@ -44,6 +46,8 @@ impl GuiFramework for EframeGui {
                     focused: false,
                     launch_options_input: String::new(),
                     editing_app: None,
+                    audio_controller,
+                    current_volume: 1.0,
                 })
             }),
         )?;
@@ -56,6 +60,8 @@ struct EframeWrapper {
     focused: bool,
     launch_options_input: String,
     editing_app: Option<String>,
+    audio_controller: AudioController,
+    current_volume: f32,
 }
 
 impl eframe::App for EframeWrapper {
@@ -86,7 +92,7 @@ impl eframe::App for EframeWrapper {
                     self.display_launch_options_edit(ui);
                 }
 
-                // Bottom panel for power options and time
+                // Bottom panel for power options, volume slider, and time
                 self.display_bottom_panel(ui);
             });
         });
@@ -104,13 +110,12 @@ impl eframe::App for EframeWrapper {
                 let app_name = self.editing_app.take().unwrap();
                 let save_input = format!("LAUNCH_OPTIONS:{}:{}", app_name, self.launch_options_input);
                 self.app.handle_input(&save_input);
-                self.launch_options_input = String::new(); // Reset input
+                self.launch_options_input = String::new();
             } else {
                 self.app.handle_input("ENTER");
             }
         }
 
-        // Handle quit request
         if self.app.should_quit() {
             ctx.request_repaint();
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -122,28 +127,19 @@ impl EframeWrapper {
     fn display_search_results(&mut self, ui: &mut egui::Ui) {
         for result in self.app.get_search_results() {
             ui.horizontal(|ui| {
-                // App launch button
                 if ui.button(&result).clicked() {
                     self.app.launch_app(&result);
                 }
-
-                // Launch options button
                 if ui.button("⚙").clicked() {
-                    // Temporarily take ownership to resolve borrowing
                     let formatted_options = {
-                        // First check if launch options exist
                         let has_options = self.app.get_launch_options(&result).is_some();
-                        
-                        // If options exist, get formatted options
                         if has_options {
-                            // Clone the result to avoid borrowing conflicts
                             let result_clone = result.clone();
                             self.app.start_launch_options_edit(&result_clone)
                         } else {
                             String::new()
                         }
                     };
-
                     self.editing_app = Some(result.clone());
                     self.launch_options_input = formatted_options;
                 }
@@ -165,22 +161,20 @@ impl EframeWrapper {
                         let app_name = self.editing_app.take().unwrap();
                         let save_input = format!("LAUNCH_OPTIONS:{}:{}", app_name, self.launch_options_input);
                         self.app.handle_input(&save_input);
-                        self.launch_options_input = String::new(); // Reset input
+                        self.launch_options_input = String::new();
                     }
                     if ui.button("Cancel").clicked() {
                         self.editing_app = None;
-                        self.launch_options_input = String::new(); // Reset input
+                        self.launch_options_input = String::new();
                     }
                 });
             });
     }
 
     fn display_bottom_panel(&mut self, ui: &mut egui::Ui) {
-        // Fetch config before entering the closure
-        let config = self.app.get_config().clone(); // Clone the config to avoid borrowing `self`
+        let config = self.app.get_config().clone();
 
         ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-            // Power options
             if config.enable_power_options {
                 ui.horizontal(|ui| {
                     if ui.button("Power").clicked() {
@@ -196,7 +190,20 @@ impl EframeWrapper {
                 ui.add_space(5.0);
             }
 
-            // Display the current time if enabled
+            // Volume slider
+            ui.horizontal(|ui| {
+                ui.label("Volume:");
+                let mut volume = self.current_volume;
+                if ui.add(egui::Slider::new(&mut volume, 0.0..=1.0)).changed() {
+                    if let Err(e) = self.audio_controller.set_volume(volume) {
+                        eprintln!("Failed to set volume: {}", e);
+                    }
+                    self.current_volume = volume;
+                }
+            });
+
+            ui.add_space(5.0);
+
             if config.show_time {
                 ui.label(format!("{}", self.app.get_time()));
             }
