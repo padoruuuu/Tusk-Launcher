@@ -1,3 +1,4 @@
+// app_launcher.rs
 use std::{
     collections::HashMap,
     fs,
@@ -7,8 +8,7 @@ use std::{
 use xdg::BaseDirectories;
 use rayon::prelude::*;
 use serde::{Serialize, Deserialize};
-use once_cell::sync::Lazy;
-use crate::cache::{update_cache, RECENT_APPS_CACHE};
+use crate::cache::{update_recent_apps, get_launch_options, update_launch_options};
 use crate::gui::AppInterface;
 use crate::config::{Config, load_config, get_current_time_in_timezone};
 
@@ -17,20 +17,6 @@ pub struct AppLaunchOptions {
     pub custom_command: Option<String>,
     pub working_directory: Option<String>,
     pub environment_vars: HashMap<String, String>,
-}
-
-static LAUNCH_OPTIONS_FILE: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("launch_options.toml"));
-
-fn load_launch_options() -> HashMap<String, AppLaunchOptions> {
-    fs::read_to_string(&*LAUNCH_OPTIONS_FILE)
-        .ok()
-        .and_then(|content| toml::from_str(&content).ok())
-        .unwrap_or_default()
-}
-
-fn save_launch_options(options: &HashMap<String, AppLaunchOptions>) -> Result<(), Box<dyn std::error::Error>> {
-    fs::write(&*LAUNCH_OPTIONS_FILE, toml::to_string_pretty(options)?)?;
-    Ok(())
 }
 
 fn get_desktop_entries() -> Vec<(String, String)> {
@@ -89,7 +75,7 @@ fn search_applications(query: &str, applications: &[(String, String)], max_resul
 
 fn launch_app(app_name: &str, exec_cmd: &str, options: &Option<AppLaunchOptions>, enable_recent_apps: bool) -> Result<(), Box<dyn std::error::Error>> {
     if enable_recent_apps {
-        update_cache(app_name, true)?;
+        update_recent_apps(app_name, true)?;
     }
 
     let home_dir = dirs::home_dir().ok_or("No home directory")?;
@@ -128,8 +114,12 @@ impl Default for AppLauncher {
     fn default() -> Self {
         let config = load_config();
         let applications = get_desktop_entries();
+        let launch_options = get_launch_options();
+        
+        // Get recent apps from cache if enabled
         let results = if config.enable_recent_apps {
-            RECENT_APPS_CACHE.lock()
+            use crate::cache::APP_CACHE;
+            APP_CACHE.lock()
                 .ok()
                 .map(|cache| cache.recent_apps.iter()
                     .filter_map(|app| applications.iter()
@@ -148,7 +138,7 @@ impl Default for AppLauncher {
             applications,
             quit: false,
             config,
-            launch_options: load_launch_options(),
+            launch_options,
         }
     }
 }
@@ -167,8 +157,8 @@ impl AppInterface for AppLauncher {
                 if parts.len() >= 3 {
                     let (app_name, options_str) = (parts[1], parts[2]);
                     let options = parse_launch_options_input(options_str);
-                    self.launch_options.insert(app_name.to_string(), options);
-                    let _ = save_launch_options(&self.launch_options);
+                    self.launch_options.insert(app_name.to_string(), options.clone());
+                    let _ = update_launch_options(app_name, options);
                     self.query.clear();
                 }
             }

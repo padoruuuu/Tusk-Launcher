@@ -34,7 +34,8 @@ impl GuiFramework for EframeGui {
             ..Default::default()
         };
         
-        let audio_controller = AudioController::new()?;
+        let audio_controller = AudioController::new(1.0)?; // Pass the desired max_volume here
+
         
         eframe::run_native(
             "Application Launcher",
