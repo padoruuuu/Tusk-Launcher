@@ -6,7 +6,14 @@ use serde::{Serialize, Deserialize};
 use once_cell::sync::Lazy;
 use crate::app_launcher::AppLaunchOptions;
 
-static CACHE_FILE: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("app_cache.toml"));
+static CACHE_FILE: Lazy<PathBuf> = Lazy::new(|| {
+    let mut path = dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("tusk-launcher");
+    fs::create_dir_all(&path).expect("Failed to create config directory");
+    path.push("app_cache.toml");
+    path
+});
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct AppCache {

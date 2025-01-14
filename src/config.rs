@@ -4,7 +4,14 @@ use serde::{Serialize, Deserialize};
 use once_cell::sync::Lazy;
 use chrono::{DateTime, Local};
 
-static CONFIG_FILE: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("config.toml"));
+static CONFIG_FILE: Lazy<PathBuf> = Lazy::new(|| {
+    let mut path = dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("tusk-launcher");
+    fs::create_dir_all(&path).expect("Failed to create config directory");
+    path.push("config.toml");
+    path
+});
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
