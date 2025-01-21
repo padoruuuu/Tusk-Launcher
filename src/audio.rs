@@ -4,30 +4,35 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use crate::config::Config;
 
 pub struct AudioController {
     volume: Arc<Mutex<f32>>,
     max_volume: f32,
+    enabled: bool,
 }
 
 impl AudioController {
-    pub fn new(max_volume: f32) -> Result<Self, Box<dyn Error>> {
-        let volume = Self::get_current_volume()?;
+    pub fn new(config: &Config) -> Result<Self, Box<dyn Error>> {
+        let volume = if config.enable_audio_control {
+            Self::get_current_volume()?
+        } else {
+            0.0
+        };
+
         Ok(AudioController {
             volume: Arc::new(Mutex::new(volume)),
-            max_volume,
+            max_volume: config.max_volume,
+            enabled: config.enable_audio_control,
         })
     }
 
     fn get_current_volume() -> Result<f32, Box<dyn Error>> {
         // Get the list of currently playing audio streams
-        let output = Command::new("pw-dump")
+        Command::new("pw-dump")
             .output()?;
         
-        let streams_str = String::from_utf8(output.stdout)?;
-        
-        // Parse the JSON output to find active streams and their volumes
-        // For now, we'll just get the default sink volume as a placeholder
+        // For now, we'll just get the default sink volume
         let output = Command::new("wpctl")
             .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
             .output()?;
@@ -43,6 +48,10 @@ impl AudioController {
     }
 
     pub fn set_volume(&self, new_volume: f32) -> Result<(), Box<dyn Error>> {
+        if !self.enabled {
+            return Ok(());
+        }
+
         let clamped_volume = new_volume.clamp(0.0, self.max_volume);
         
         // Get all active audio streams
@@ -50,11 +59,7 @@ impl AudioController {
             .output()?;
         
         if output.status.success() {
-            // Parse the JSON to find active streams
-            let streams_str = String::from_utf8(output.stdout)?;
-            
             // For each active stream, set its volume
-            // This is where we'll use pw-cli to set individual stream volumes
             Command::new("wpctl")
                 .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{:.2}", clamped_volume)])
                 .output()?;
@@ -65,15 +70,29 @@ impl AudioController {
     }
 
     pub fn update_volume(&self) -> Result<(), Box<dyn Error>> {
+        if !self.enabled {
+            return Ok(());
+        }
+
         let current_volume = Self::get_current_volume()?;
         *self.volume.lock().unwrap() = current_volume;
         Ok(())
     }
 
-    pub fn start_polling(&self, interval: Duration) {
+    pub fn start_polling(&self, config: &Config) {
+        if !config.enable_audio_control {
+            return;
+        }
+
         let volume_clone = Arc::clone(&self.volume);
+        let enabled = self.enabled;
+        let interval = Duration::from_millis(config.volume_update_interval_ms);
         
         thread::spawn(move || loop {
+            if !enabled {
+                break;
+            }
+
             if let Ok(volume) = Self::get_current_volume() {
                 let mut vol_lock = volume_clone.lock().unwrap();
                 *vol_lock = volume;
@@ -83,6 +102,13 @@ impl AudioController {
     }
 
     pub fn get_volume(&self) -> f32 {
+        if !self.enabled {
+            return 0.0;
+        }
         *self.volume.lock().unwrap()
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
     }
 }

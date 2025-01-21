@@ -34,13 +34,17 @@ impl GuiFramework for EframeGui {
             ..Default::default()
         };
         
-        let audio_controller = AudioController::new(1.0)?; // Pass the desired max_volume here
-
+        // Create the audio controller with the config from the app
+        let config = app.get_config();
+        let audio_controller = AudioController::new(config)?;
         
+        // Start the polling if audio control is enabled
+        audio_controller.start_polling(config);
+
         eframe::run_native(
             "Application Launcher",
             native_options,
-            Box::new(|cc| {
+            Box::new(move |cc| {
                 cc.egui_ctx.request_repaint();
                 Box::new(EframeWrapper {
                     app,
@@ -48,7 +52,7 @@ impl GuiFramework for EframeGui {
                     launch_options_input: String::new(),
                     editing_app: None,
                     audio_controller,
-                    current_volume: 1.0,
+                    current_volume: 0.0, // We'll update this in the first frame
                 })
             }),
         )?;
@@ -68,6 +72,12 @@ struct EframeWrapper {
 impl eframe::App for EframeWrapper {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.app.update();
+
+        // Update current volume from controller
+        if let Ok(()) = self.audio_controller.update_volume() {
+            self.current_volume = self.audio_controller.get_volume();
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical(|ui| {
                 // Search bar
@@ -173,10 +183,14 @@ impl EframeWrapper {
     }
 
     fn display_bottom_panel(&mut self, ui: &mut egui::Ui) {
-        let config = self.app.get_config().clone();
+        // Get the values we need from config ahead of time
+        let enable_power_options = self.app.get_config().enable_power_options;
+        let show_time = self.app.get_config().show_time;
+        let max_volume = self.app.get_config().max_volume;
+        let time = self.app.get_time();
 
         ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-            if config.enable_power_options {
+            if enable_power_options {
                 ui.horizontal(|ui| {
                     if ui.button("Power").clicked() {
                         self.app.handle_input("P");
@@ -191,22 +205,23 @@ impl EframeWrapper {
                 ui.add_space(5.0);
             }
 
-            // Volume slider
-            ui.horizontal(|ui| {
-                ui.label("Volume:");
-                let mut volume = self.current_volume;
-                if ui.add(egui::Slider::new(&mut volume, 0.0..=1.0)).changed() {
-                    if let Err(e) = self.audio_controller.set_volume(volume) {
-                        eprintln!("Failed to set volume: {}", e);
+            // Volume slider - only show if audio control is enabled
+            if self.audio_controller.is_enabled() {
+                ui.horizontal(|ui| {
+                    ui.label("Volume:");
+                    let mut volume = self.current_volume;
+                    if ui.add(egui::Slider::new(&mut volume, 0.0..=max_volume)).changed() {
+                        if let Err(e) = self.audio_controller.set_volume(volume) {
+                            eprintln!("Failed to set volume: {}", e);
+                        }
+                        self.current_volume = volume;
                     }
-                    self.current_volume = volume;
-                }
-            });
+                });
+                ui.add_space(5.0);
+            }
 
-            ui.add_space(5.0);
-
-            if config.show_time {
-                ui.label(format!("{}", self.app.get_time()));
+            if show_time {
+                ui.label(time);
             }
         });
     }
