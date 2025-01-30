@@ -1,16 +1,15 @@
-// app_launcher.rs
 use std::{
     collections::HashMap,
     fs,
+    path::{Path, PathBuf},
     process::Command,
-    path::PathBuf,
 };
 use xdg::BaseDirectories;
 use rayon::prelude::*;
 use serde::{Serialize, Deserialize};
-use crate::cache::{update_recent_apps, get_launch_options, update_launch_options};
+use crate::{config::Config, cache::{update_recent_apps, get_launch_options, update_launch_options}};
 use crate::gui::AppInterface;
-use crate::config::{Config, load_config, get_current_time_in_timezone};
+use crate::config::{load_config, get_current_time_in_timezone};
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct AppLaunchOptions {
@@ -19,7 +18,7 @@ pub struct AppLaunchOptions {
     pub environment_vars: HashMap<String, String>,
 }
 
-fn get_desktop_entries() -> Vec<(String, String)> {
+fn get_desktop_entries() -> Vec<(String, String, String)> {
     BaseDirectories::new()
         .map(|xdg| xdg.get_data_dirs())
         .unwrap_or_default()
@@ -38,39 +37,91 @@ fn get_desktop_entries() -> Vec<(String, String)> {
         .collect()
 }
 
-fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String)> {
+fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
     let content = fs::read_to_string(path).ok()?;
     let mut name = None;
     let mut exec = None;
+    let mut icon = None;
 
     for line in content.lines() {
-        match line.split_once('=') {
-            Some(("Name", value)) => name = Some(value.trim().to_string()),
-            Some(("Exec", value)) => {
-                exec = Some(value.trim().to_string());
-                if name.is_some() { break; }
+        if let Some((key, value)) = line.split_once('=') {
+            match key {
+                "Name" => name = Some(value.trim().to_string()),
+                "Exec" => exec = Some(value.trim().to_string()),
+                "Icon" => icon = Some(value.trim().to_string()),
+                _ => (),
             }
-            _ => continue,
+        }
+        if name.is_some() && exec.is_some() && icon.is_some() {
+            break;
         }
     }
 
-    name.zip(exec).map(|(name, exec)| {
-        let exec = ["%f", "%u", "%U", "%F", "%i", "%c", "%k"]
-            .iter()
-            .fold(exec, |acc, &placeholder| acc.replace(placeholder, ""))
-            .trim()
-            .to_string();
-        (name, exec)
-    })
+    let name = name?;
+    let exec = exec?;
+    let icon = icon.unwrap_or_default();
+
+    let exec = ["%f", "%u", "%U", "%F", "%i", "%c", "%k"]
+        .iter()
+        .fold(exec, |acc, &placeholder| acc.replace(placeholder, ""))
+        .trim()
+        .to_string();
+
+    Some((name, exec, icon))
 }
 
-fn search_applications(query: &str, applications: &[(String, String)], max_results: usize) -> Vec<(String, String)> {
+fn search_applications(query: &str, applications: &[(String, String, String)], max_results: usize) -> Vec<(String, String, String)> {
     let query = query.to_lowercase();
     applications.iter()
-        .filter(|(name, _)| name.to_lowercase().contains(&query))
+        .filter(|(name, _, _)| name.to_lowercase().contains(&query))
         .take(max_results)
         .cloned()
         .collect()
+}
+
+fn resolve_icon_path(icon_name: &str, config: &Config) -> Option<String> {
+    if icon_name.is_empty() || !config.enable_icons {
+        return None;
+    }
+
+    let icon_path = Path::new(icon_name);
+    if icon_path.is_absolute() {
+        return Some(icon_name.to_string());
+    }
+
+    let cached_base = config.icon_cache_dir.join(icon_name);
+    let extensions = ["png", "svg", "xpm"];
+    for ext in &extensions {
+        let cached_path = cached_base.with_extension(ext);
+        if cached_path.exists() {
+            return cached_path.to_str().map(|s| s.to_string());
+        }
+    }
+
+    let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let system_dirs = [
+        Path::new("/usr/share/icons/hicolor/48x48/apps"),
+        Path::new("/usr/share/icons/hicolor/32x32/apps"),
+        Path::new("/usr/share/icons/hicolor/scalable/apps"),
+        Path::new("/usr/share/pixmaps"),
+        Path::new("/usr/local/share/icons/hicolor/48x48/apps"),
+        &home_dir.join(".local/share/icons/hicolor/48x48/apps"), // Add & before the join
+    ];
+
+    for dir in &system_dirs {
+        for ext in &extensions {
+            let path = dir.join(icon_name).with_extension(ext);
+            if path.exists() {
+                fs::create_dir_all(&config.icon_cache_dir).ok()?;
+                let cached_path = config.icon_cache_dir.join(icon_name).with_extension(ext);
+                if fs::copy(&path, &cached_path).is_ok() {
+                    return cached_path.to_str().map(|s| s.to_string());
+                }
+            }
+        }
+    }
+
+    None
 }
 
 fn launch_app(app_name: &str, exec_cmd: &str, options: &Option<AppLaunchOptions>, enable_recent_apps: bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -103,8 +154,8 @@ fn launch_app(app_name: &str, exec_cmd: &str, options: &Option<AppLaunchOptions>
 
 pub struct AppLauncher {
     query: String,
-    applications: Vec<(String, String)>,
-    results: Vec<(String, String)>,
+    applications: Vec<(String, String, String)>,
+    results: Vec<(String, String, String)>,
     quit: bool,
     config: Config,
     launch_options: HashMap<String, AppLaunchOptions>,
@@ -116,14 +167,13 @@ impl Default for AppLauncher {
         let applications = get_desktop_entries();
         let launch_options = get_launch_options();
         
-        // Get recent apps from cache if enabled
         let results = if config.enable_recent_apps {
             use crate::cache::APP_CACHE;
             APP_CACHE.lock()
                 .ok()
                 .map(|cache| cache.recent_apps.iter()
                     .filter_map(|app| applications.iter()
-                        .find(|(name, _)| name == app)
+                        .find(|(name, _, _)| name == app)
                         .cloned())
                     .take(config.max_search_results)
                     .collect())
@@ -176,12 +226,12 @@ impl AppInterface for AppLauncher {
 
     fn should_quit(&self) -> bool { self.quit }
     fn get_query(&self) -> String { self.query.clone() }
-    fn get_search_results(&self) -> Vec<String> { self.results.iter().map(|(name, _)| name.clone()).collect() }
+    fn get_search_results(&self) -> Vec<String> { self.results.iter().map(|(name, _, _)| name.clone()).collect() }
     fn get_time(&self) -> String { get_current_time_in_timezone(&self.config) }
     fn get_config(&self) -> &Config { &self.config }
     
     fn launch_app(&mut self, app_name: &str) {
-        if let Some((_, exec_cmd)) = self.results.iter().find(|(name, _)| name == app_name) {
+        if let Some((_, exec_cmd, _)) = self.results.iter().find(|(name, _, _)| name == app_name) {
             let options = self.launch_options.get(app_name).cloned();
             if launch_app(app_name, exec_cmd, &options, self.config.enable_recent_apps).is_ok() {
                 self.quit = true;
@@ -196,11 +246,17 @@ impl AppInterface for AppLauncher {
     fn get_launch_options(&self, app_name: &str) -> Option<&AppLaunchOptions> {
         self.launch_options.get(app_name)
     }
+
+    fn get_icon_path(&self, app_name: &str) -> Option<String> {
+        self.results.iter()
+            .find(|(name, _, _)| name == app_name)
+            .and_then(|(_, _, icon)| resolve_icon_path(icon, &self.config))
+    }
 }
 
 impl AppLauncher {
     fn launch_first_result(&mut self) {
-        if let Some((app_name, exec_cmd)) = self.results.first() {
+        if let Some((app_name, exec_cmd, _)) = self.results.first() {
             let options = self.launch_options.get(app_name).cloned();
             if launch_app(app_name, exec_cmd, &options, self.config.enable_recent_apps).is_ok() {
                 self.quit = true;

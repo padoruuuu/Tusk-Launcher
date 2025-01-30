@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::collections::HashMap;
 use eframe::egui;
 use crate::{config::Config, app_launcher::AppLaunchOptions, audio::AudioController};
 
@@ -13,6 +14,7 @@ pub trait AppInterface {
     fn get_config(&self) -> &Config;
     fn start_launch_options_edit(&mut self, app_name: &str) -> String;
     fn get_launch_options(&self, app_name: &str) -> Option<&AppLaunchOptions>;
+    fn get_icon_path(&self, app_name: &str) -> Option<String>;
 }
 
 pub struct EframeGui;
@@ -45,6 +47,7 @@ impl EframeGui {
                     current_volume: 0.0,
                     editing: None,
                     focused: false,
+                    icon_textures: HashMap::new(),
                 })
             }),
         )?;
@@ -54,10 +57,11 @@ impl EframeGui {
 
 struct EframeWrapper {
     app: Box<dyn AppInterface>,
-    audio_controller: AudioController,
+    audio_controller: AudioController,     
     current_volume: f32,
     editing: Option<(String, String)>,
     focused: bool,
+    icon_textures: HashMap<String, egui::TextureHandle>,
 }
 
 impl eframe::App for EframeWrapper {
@@ -84,26 +88,44 @@ impl eframe::App for EframeWrapper {
 
                 // Application results
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    for result in self.app.get_search_results() {
+                    for app_name in self.app.get_search_results() {
                         ui.horizontal(|ui| {
-                            if ui.button(&result).clicked() {
-                                self.app.launch_app(&result);
+                            // Display icon if enabled
+                            if self.app.get_config().enable_icons {
+                                if let Some(icon_path) = self.app.get_icon_path(&app_name) {
+                                    let texture = self.icon_textures.entry(icon_path.clone()).or_insert_with(|| {
+                                        let image = match image::open(&icon_path) {
+                                            Ok(img) => {
+                                                let img = img.to_rgba8();
+                                                let size = [img.width() as usize, img.height() as usize];
+                                                egui::ColorImage::from_rgba_unmultiplied(size, &img)
+                                            }
+                                            Err(_) => egui::ColorImage::new([1,1], egui::Color32::TRANSPARENT)
+                                        };
+                                        ctx.load_texture("icon", image, Default::default())
+                                    });
+                                    let size = egui::Vec2::splat(16.0);
+                                    ui.add(egui::Image::new(&*texture).fit_to_exact_size(size));
+                                }
+                            }
+
+                            if ui.button(&app_name).clicked() {
+                                self.app.launch_app(&app_name);
                             }
                             
                             if ui.button("⚙").clicked() && self.editing.is_none() {
-                                let options = match self.app.get_launch_options(&result) {
-                                    Some(_) => self.app.start_launch_options_edit(&result),
+                                let options = match self.app.get_launch_options(&app_name) {
+                                    Some(_) => self.app.start_launch_options_edit(&app_name),
                                     None => String::new(),
                                 };
-                                self.editing = Some((result, options));
+                                self.editing = Some((app_name, options));
                             }
                         });
                     }
                 });
 
-                // Push everything else to the bottom using available space
+                // Push everything else to the bottom
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                    // Power options at the bottom
                     if self.app.get_config().enable_power_options {
                         ui.horizontal(|ui| {
                             for (label, cmd) in [("Power", "P"), ("Restart", "R"), ("Logout", "L")] {
@@ -115,7 +137,6 @@ impl eframe::App for EframeWrapper {
                         ui.add_space(5.0);
                     }
 
-                    // Volume control above power options
                     if self.audio_controller.is_enabled() {
                         ui.horizontal(|ui| {
                             ui.label("Volume:");
@@ -129,7 +150,6 @@ impl eframe::App for EframeWrapper {
                         ui.add_space(5.0);
                     }
 
-                    // Time display above volume
                     if self.app.get_config().show_time {
                         ui.label(self.app.get_time());
                         ui.add_space(5.0);
@@ -137,7 +157,6 @@ impl eframe::App for EframeWrapper {
                 });
             });
 
-            // Launch options window
             if let Some((ref app_name, ref options)) = self.editing.clone() {
                 let mut input = options.to_string();
                 egui::Window::new(format!("Launch Options for {}", app_name))
@@ -159,7 +178,6 @@ impl eframe::App for EframeWrapper {
             }
         });
 
-        // Handle key events
         let (esc_pressed, enter_pressed) = ctx.input(|i| (
             i.key_pressed(egui::Key::Escape),
             i.key_pressed(egui::Key::Enter)

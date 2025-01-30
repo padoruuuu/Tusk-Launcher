@@ -27,17 +27,23 @@ pub struct Config {
     pub power_commands: Vec<String>,
     pub restart_commands: Vec<String>,
     pub logout_commands: Vec<String>,
+    pub enable_icons: bool,
+    pub icon_cache_dir: PathBuf,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub enum TimeOrder {
-    MdyHms,  // Month/Day/Year Hours:Minutes:Seconds
-    YmdHms,  // Year/Month/Day Hours:Minutes:Seconds
-    DmyHms,  // Day/Month/Year Hours:Minutes:Seconds
+    MdyHms,
+    YmdHms,
+    DmyHms,
 }
 
 impl Default for Config {
     fn default() -> Self {
+        let icon_cache_dir = dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("tusk-launcher/icons");
+        
         Self {
             enable_recent_apps: true,
             max_search_results: 5,
@@ -66,6 +72,8 @@ impl Default for Config {
                 "gnome-session-quit --logout --no-prompt".to_string(),
                 "qdbus org.kde.ksmserver /KSMServer logout 0 0 0".to_string(),
             ],
+            enable_icons: true,
+            icon_cache_dir,
         }
     }
 }
