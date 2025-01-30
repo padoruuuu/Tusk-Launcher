@@ -7,7 +7,7 @@ mod config;
 mod audio;
 
 use app_launcher::AppLauncher;
-use crate::gui::{EframeGui, GuiFramework};
+use crate::gui::{EframeGui};
 use crate::config::load_config; // To load the config
 use crate::clock::get_current_time; // To get the current time
 

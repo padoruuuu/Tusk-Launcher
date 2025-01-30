@@ -1,12 +1,6 @@
 use std::error::Error;
 use eframe::egui;
-use crate::config::Config;
-use crate::app_launcher::AppLaunchOptions;
-use crate::audio::AudioController;
-
-pub trait GuiFramework {
-    fn run(app: Box<dyn AppInterface>) -> Result<(), Box<dyn Error>>;
-}
+use crate::{config::Config, app_launcher::AppLaunchOptions, audio::AudioController};
 
 pub trait AppInterface {
     fn update(&mut self);
@@ -23,36 +17,34 @@ pub trait AppInterface {
 
 pub struct EframeGui;
 
-impl GuiFramework for EframeGui {
-    fn run(app: Box<dyn AppInterface>) -> Result<(), Box<dyn std::error::Error>> {
+impl EframeGui {
+    pub fn run(app: Box<dyn AppInterface>) -> Result<(), Box<dyn Error>> {
         let native_options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
                 .with_inner_size([350.0, 500.0])
                 .with_always_on_top()
-                .with_decorations(true)
-                .with_transparent(false),
+                .with_decorations(true),
             ..Default::default()
         };
-        
-        // Create the audio controller with the config from the app
-        let config = app.get_config();
-        let audio_controller = AudioController::new(config)?;
-        
-        // Start the polling if audio control is enabled
-        audio_controller.start_polling(config);
+
+        let audio_controller = {
+            let config = app.get_config();
+            let ctrl = AudioController::new(config)?;
+            ctrl.start_polling(config);
+            ctrl
+        };
 
         eframe::run_native(
             "Application Launcher",
             native_options,
-            Box::new(move |cc| {
+            Box::new(|cc| {
                 cc.egui_ctx.request_repaint();
                 Box::new(EframeWrapper {
                     app,
-                    focused: false,
-                    launch_options_input: String::new(),
-                    editing_app: None,
                     audio_controller,
-                    current_volume: 0.0, // We'll update this in the first frame
+                    current_volume: 0.0,
+                    editing: None,
+                    focused: false,
                 })
             }),
         )?;
@@ -62,167 +54,137 @@ impl GuiFramework for EframeGui {
 
 struct EframeWrapper {
     app: Box<dyn AppInterface>,
-    focused: bool,
-    launch_options_input: String,
-    editing_app: Option<String>,
     audio_controller: AudioController,
     current_volume: f32,
+    editing: Option<(String, String)>,
+    focused: bool,
 }
 
 impl eframe::App for EframeWrapper {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.app.update();
-
-        // Update current volume from controller
-        if let Ok(()) = self.audio_controller.update_volume() {
+        
+        if self.audio_controller.update_volume().is_ok() {
             self.current_volume = self.audio_controller.get_volume();
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical(|ui| {
-                // Search bar
+                // Search bar at the top
                 let mut query = self.app.get_query();
-                let search_response = ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search..."));
-
+                let response = ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search..."));
                 if !self.focused {
-                    search_response.request_focus();
+                    response.request_focus();
                     self.focused = true;
                 }
-
-                if search_response.changed() && !query.starts_with("LAUNCH_OPTIONS:") {
+                if response.changed() && !query.starts_with("LAUNCH_OPTIONS:") {
                     self.app.handle_input(&query);
                 }
-
                 ui.add_space(10.0);
 
-                // Display search results with launch options buttons
-                self.display_search_results(ui);
+                // Application results
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for result in self.app.get_search_results() {
+                        ui.horizontal(|ui| {
+                            if ui.button(&result).clicked() {
+                                self.app.launch_app(&result);
+                            }
+                            
+                            if ui.button("⚙").clicked() && self.editing.is_none() {
+                                let options = match self.app.get_launch_options(&result) {
+                                    Some(_) => self.app.start_launch_options_edit(&result),
+                                    None => String::new(),
+                                };
+                                self.editing = Some((result, options));
+                            }
+                        });
+                    }
+                });
 
-                // Launch options editing window (if active)
-                if self.editing_app.is_some() {
-                    self.display_launch_options_edit(ui);
-                }
+                // Push everything else to the bottom using available space
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                    // Power options at the bottom
+                    if self.app.get_config().enable_power_options {
+                        ui.horizontal(|ui| {
+                            for (label, cmd) in [("Power", "P"), ("Restart", "R"), ("Logout", "L")] {
+                                if ui.button(label).clicked() {
+                                    self.app.handle_input(cmd);
+                                }
+                            }
+                        });
+                        ui.add_space(5.0);
+                    }
 
-                // Bottom panel for power options, volume slider, and time
-                self.display_bottom_panel(ui);
+                    // Volume control above power options
+                    if self.audio_controller.is_enabled() {
+                        ui.horizontal(|ui| {
+                            ui.label("Volume:");
+                            let mut volume = self.current_volume;
+                            if ui.add(egui::Slider::new(&mut volume, 0.0..=self.app.get_config().max_volume)).changed() {
+                                if self.audio_controller.set_volume(volume).is_ok() {
+                                    self.current_volume = volume;
+                                }
+                            }
+                        });
+                        ui.add_space(5.0);
+                    }
+
+                    // Time display above volume
+                    if self.app.get_config().show_time {
+                        ui.label(self.app.get_time());
+                        ui.add_space(5.0);
+                    }
+                });
             });
+
+            // Launch options window
+            if let Some((ref app_name, ref options)) = self.editing.clone() {
+                let mut input = options.to_string();
+                egui::Window::new(format!("Launch Options for {}", app_name))
+                    .collapsible(false)
+                    .show(ctx, |ui| {
+                        ui.label("Enter launch command (format: command;;working_directory;;env_vars):");
+                        ui.text_edit_singleline(&mut input);
+                        
+                        ui.horizontal(|ui| {
+                            if ui.button("Save").clicked() {
+                                self.app.handle_input(&format!("LAUNCH_OPTIONS:{}:{}", app_name, input));
+                                self.editing = None;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                self.editing = None;
+                            }
+                        });
+                    });
+            }
         });
 
-        // Handle key presses
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            if self.editing_app.is_some() {
-                self.editing_app = None;
-            } else {
-                self.app.handle_input("ESC");
-            }
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-            if self.editing_app.is_some() {
-                let app_name = self.editing_app.take().unwrap();
-                let save_input = format!("LAUNCH_OPTIONS:{}:{}", app_name, self.launch_options_input);
-                self.app.handle_input(&save_input);
-                self.launch_options_input = String::new();
-            } else {
-                self.app.handle_input("ENTER");
-            }
+        // Handle key events
+        let (esc_pressed, enter_pressed) = ctx.input(|i| (
+            i.key_pressed(egui::Key::Escape),
+            i.key_pressed(egui::Key::Enter)
+        ));
+
+        match (esc_pressed, enter_pressed) {
+            (true, _) => {
+                if self.editing.is_some() {
+                    self.editing = None;
+                } else {
+                    self.app.handle_input("ESC");
+                }
+            },
+            (_, true) => {
+                if let Some((app_name, options)) = self.editing.take() {
+                    self.app.handle_input(&format!("LAUNCH_OPTIONS:{}:{}", app_name, options));
+                } else {
+                    self.app.handle_input("ENTER");
+                }
+            },
+            _ => {}
         }
 
         if self.app.should_quit() {
-            ctx.request_repaint();
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-    }
-}
-
-impl EframeWrapper {
-    fn display_search_results(&mut self, ui: &mut egui::Ui) {
-        for result in self.app.get_search_results() {
-            ui.horizontal(|ui| {
-                if ui.button(&result).clicked() {
-                    self.app.launch_app(&result);
-                }
-                if ui.button("⚙").clicked() {
-                    let formatted_options = {
-                        let has_options = self.app.get_launch_options(&result).is_some();
-                        if has_options {
-                            let result_clone = result.clone();
-                            self.app.start_launch_options_edit(&result_clone)
-                        } else {
-                            String::new()
-                        }
-                    };
-                    self.editing_app = Some(result.clone());
-                    self.launch_options_input = formatted_options;
-                }
-            });
-        }
-    }
-
-    fn display_launch_options_edit(&mut self, ui: &mut egui::Ui) {
-        let app_name = self.editing_app.as_ref().unwrap();
-        
-        egui::Window::new(format!("Launch Options for {}", app_name))
-            .collapsible(false)
-            .show(ui.ctx(), |ui| {
-                ui.label("Enter launch command (format: command;;working_directory;;env_vars):");
-                ui.text_edit_singleline(&mut self.launch_options_input);
-                
-                ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
-                        let app_name = self.editing_app.take().unwrap();
-                        let save_input = format!("LAUNCH_OPTIONS:{}:{}", app_name, self.launch_options_input);
-                        self.app.handle_input(&save_input);
-                        self.launch_options_input = String::new();
-                    }
-                    if ui.button("Cancel").clicked() {
-                        self.editing_app = None;
-                        self.launch_options_input = String::new();
-                    }
-                });
-            });
-    }
-
-    fn display_bottom_panel(&mut self, ui: &mut egui::Ui) {
-        // Get the values we need from config ahead of time
-        let enable_power_options = self.app.get_config().enable_power_options;
-        let show_time = self.app.get_config().show_time;
-        let max_volume = self.app.get_config().max_volume;
-        let time = self.app.get_time();
-
-        ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-            if enable_power_options {
-                ui.horizontal(|ui| {
-                    if ui.button("Power").clicked() {
-                        self.app.handle_input("P");
-                    }
-                    if ui.button("Restart").clicked() {
-                        self.app.handle_input("R");
-                    }
-                    if ui.button("Logout").clicked() {
-                        self.app.handle_input("L");
-                    }
-                });
-                ui.add_space(5.0);
-            }
-
-            // Volume slider - only show if audio control is enabled
-            if self.audio_controller.is_enabled() {
-                ui.horizontal(|ui| {
-                    ui.label("Volume:");
-                    let mut volume = self.current_volume;
-                    if ui.add(egui::Slider::new(&mut volume, 0.0..=max_volume)).changed() {
-                        if let Err(e) = self.audio_controller.set_volume(volume) {
-                            eprintln!("Failed to set volume: {}", e);
-                        }
-                        self.current_volume = volume;
-                    }
-                });
-                ui.add_space(5.0);
-            }
-
-            if show_time {
-                ui.label(time);
-            }
-        });
     }
 }
