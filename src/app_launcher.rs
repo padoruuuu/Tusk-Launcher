@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 use xdg::BaseDirectories;
 use rayon::prelude::*;
@@ -18,6 +18,56 @@ pub struct AppLaunchOptions {
     pub environment_vars: HashMap<String, String>,
 }
 
+/// Parses a .desktop file and returns a tuple of (Name, Exec, Icon).
+/// This version only sets each field once (i.e. the first occurrence) to avoid overwriting good data.
+fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
+    let content = fs::read_to_string(path).ok()?;
+    let mut name: Option<String> = None;
+    let mut exec: Option<String> = None;
+    let mut icon: Option<String> = None;
+    let mut wl_class: Option<String> = None;
+
+    for line in content.lines() {
+        if let Some((key_raw, value_raw)) = line.split_once('=') {
+            let key = key_raw.trim();
+            let value = value_raw.trim();
+            match key {
+                "Name" if name.is_none() => name = Some(value.to_string()),
+                "Exec" if exec.is_none() => exec = Some(value.to_string()),
+                "Icon" if icon.is_none() => icon = Some(value.to_string()),
+                "StartupWMClass" if wl_class.is_none() => wl_class = Some(value.to_string()),
+                _ => (),
+            }
+            // If we already got Name and Exec (icon can be empty) we could break early
+            if name.is_some() && exec.is_some() && icon.is_some() {
+                // Uncomment the next line if you want to break as soon as possible:
+                // break;
+            }
+        }
+    }
+
+    let name = name?;
+    let mut exec = exec?;
+    let icon = icon.unwrap_or_default();
+
+    // Remove placeholders. Note that we now only remove %f, %u, %U, %F.
+    // Then replace %i with --icon <icon>
+    exec = ["%f", "%u", "%U", "%F"]
+        .iter()
+        .fold(exec, |acc, &placeholder| acc.replace(placeholder, ""))
+        .replace("%i", &format!("--icon {}", icon))
+        .trim()
+        .to_string();
+
+    // Append the StartupWMClass if present
+    if let Some(class) = wl_class {
+        exec = format!("{} --class {}", exec, class);
+    }
+
+    Some((name, exec, icon))
+}
+
+/// Returns a list of desktop entries as tuples of (Name, Exec, Icon).
 fn get_desktop_entries() -> Vec<(String, String, String)> {
     BaseDirectories::new()
         .map(|xdg| xdg.get_data_dirs())
@@ -28,48 +78,20 @@ fn get_desktop_entries() -> Vec<(String, String, String)> {
             fs::read_dir(&apps_dir)
                 .ok()
                 .into_iter()
-                .flat_map(|entries| entries
-                    .filter_map(|entry| entry.ok())
-                    .filter(|entry| entry.path().extension().map_or(false, |ext| ext == "desktop"))
-                    .filter_map(|entry| parse_desktop_entry(&entry.path())))
+                .flat_map(|entries| {
+                    entries
+                        .filter_map(|entry| entry.ok())
+                        .filter(|entry| {
+                            entry.path().extension().map_or(false, |ext| ext == "desktop")
+                        })
+                        .filter_map(|entry| parse_desktop_entry(&entry.path()))
+                })
                 .collect::<Vec<_>>()
         })
         .collect()
 }
 
-fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
-    let content = fs::read_to_string(path).ok()?;
-    let mut name = None;
-    let mut exec = None;
-    let mut icon = None;
-
-    for line in content.lines() {
-        if let Some((key, value)) = line.split_once('=') {
-            match key {
-                "Name" => name = Some(value.trim().to_string()),
-                "Exec" => exec = Some(value.trim().to_string()),
-                "Icon" => icon = Some(value.trim().to_string()),
-                _ => (),
-            }
-        }
-        if name.is_some() && exec.is_some() && icon.is_some() {
-            break;
-        }
-    }
-
-    let name = name?;
-    let exec = exec?;
-    let icon = icon.unwrap_or_default();
-
-    let exec = ["%f", "%u", "%U", "%F", "%i", "%c", "%k"]
-        .iter()
-        .fold(exec, |acc, &placeholder| acc.replace(placeholder, ""))
-        .trim()
-        .to_string();
-
-    Some((name, exec, icon))
-}
-
+/// Filters the list of applications based on the search query.
 fn search_applications(query: &str, applications: &[(String, String, String)], max_results: usize) -> Vec<(String, String, String)> {
     let query = query.to_lowercase();
     applications.iter()
@@ -79,6 +101,7 @@ fn search_applications(query: &str, applications: &[(String, String, String)], m
         .collect()
 }
 
+/// Resolves the icon path based on configuration and caches if needed.
 fn resolve_icon_path(icon_name: &str, config: &Config) -> Option<String> {
     if icon_name.is_empty() || !config.enable_icons {
         return None;
@@ -98,14 +121,12 @@ fn resolve_icon_path(icon_name: &str, config: &Config) -> Option<String> {
         }
     }
 
-    let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let system_dirs = [
         Path::new("/usr/share/icons/hicolor/48x48/apps"),
-        Path::new("/usr/share/icons/hicolor/32x32/apps"),
         Path::new("/usr/share/icons/hicolor/scalable/apps"),
         Path::new("/usr/share/pixmaps"),
-        Path::new("/usr/local/share/icons/hicolor/48x48/apps"),
-        &home_dir.join(".local/share/icons/hicolor/48x48/apps"), // Add & before the join
+        Path::new("/usr/local/share/icons"),
+        &dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".local/share")).join("icons"),
     ];
 
     for dir in &system_dirs {
@@ -124,6 +145,7 @@ fn resolve_icon_path(icon_name: &str, config: &Config) -> Option<String> {
     None
 }
 
+/// Launches an application.
 fn launch_app(app_name: &str, exec_cmd: &str, options: &Option<AppLaunchOptions>, enable_recent_apps: bool) -> Result<(), Box<dyn std::error::Error>> {
     if enable_recent_apps {
         update_recent_apps(app_name, true)?;
@@ -140,18 +162,19 @@ fn launch_app(app_name: &str, exec_cmd: &str, options: &Option<AppLaunchOptions>
     };
 
     let mut command = Command::new("sh");
-    command.arg("-c").arg(cmd).current_dir(dir);
+    command
+        .arg("-c")
+        .arg(cmd)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
 
-    if let Some(opts) = options {
-        for (key, value) in &opts.environment_vars {
-            command.env(key, value);
-        }
-    }
-
-    command.spawn()?;
     Ok(())
 }
 
+/// Main struct for launching applications.
 pub struct AppLauncher {
     query: String,
     applications: Vec<(String, String, String)>,
@@ -283,6 +306,7 @@ impl AppLauncher {
     }
 }
 
+/// Parses the input for launch options.
 fn parse_launch_options_input(input: &str) -> AppLaunchOptions {
     let mut parts = input.split_whitespace().peekable();
     let mut options = AppLaunchOptions::default();
