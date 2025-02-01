@@ -38,9 +38,7 @@ fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
                 "StartupWMClass" if wl_class.is_none() => wl_class = Some(value.to_string()),
                 _ => (),
             }
-            // If we already got Name and Exec (icon can be empty) we could break early
             if name.is_some() && exec.is_some() && icon.is_some() {
-                // Uncomment the next line if you want to break as soon as possible:
                 // break;
             }
         }
@@ -50,8 +48,6 @@ fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
     let mut exec = exec?;
     let icon = icon.unwrap_or_default();
 
-    // Remove placeholders. Note that we now only remove %f, %u, %U, %F.
-    // Then replace %i with --icon <icon>
     exec = ["%f", "%u", "%U", "%F"]
         .iter()
         .fold(exec, |acc, &placeholder| acc.replace(placeholder, ""))
@@ -59,7 +55,6 @@ fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
         .trim()
         .to_string();
 
-    // Append the StartupWMClass if present
     if let Some(class) = wl_class {
         exec = format!("{} --class {}", exec, class);
     }
@@ -114,6 +109,8 @@ fn resolve_icon_path(icon_name: &str, config: &Config) -> Option<String> {
 
     let cached_base = config.icon_cache_dir.join(icon_name);
     let extensions = ["png", "svg", "xpm"];
+    
+    // Check cache first
     for ext in &extensions {
         let cached_path = cached_base.with_extension(ext);
         if cached_path.exists() {
@@ -121,23 +118,76 @@ fn resolve_icon_path(icon_name: &str, config: &Config) -> Option<String> {
         }
     }
 
-    let system_dirs = [
-        Path::new("/usr/share/icons/hicolor/48x48/apps"),
-        Path::new("/usr/share/icons/hicolor/scalable/apps"),
-        Path::new("/usr/share/pixmaps"),
-        Path::new("/usr/local/share/icons"),
-        &dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".local/share")).join("icons"),
+    // Define all possible icon sizes for Flatpak and system icons
+    let icon_sizes = ["512x512", "256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "16x16", "scalable"];
+    let categories = ["apps", "devices", "places", "mimetypes", "status", "actions"];
+
+    // Flatpak icon paths
+    let user_flatpak_base = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from(".local/share"))
+        .join("flatpak/exports/share/icons");
+    let system_flatpak_base = PathBuf::from("/var/lib/flatpak/exports/share/icons");
+    
+    // System icon paths
+    let system_icon_dirs = vec![
+        PathBuf::from("/usr/share/icons"),
+        PathBuf::from("/usr/local/share/icons"),
+        dirs::data_local_dir()
+            .unwrap_or_else(|| PathBuf::from(".local/share"))
+            .join("icons"),
+        PathBuf::from("/usr/share/pixmaps"),
     ];
 
-    for dir in &system_dirs {
+    // Common icon themes
+    let icon_themes = ["hicolor", "Adwaita", "gnome", "breeze", "oxygen"];
+
+    // Helper function to check icon existence in a directory
+    let check_icon = |base_dir: &Path, theme: &str, size: &str, category: &str, icon: &str| -> Option<PathBuf> {
+        let icon_dir = base_dir.join(theme).join(size).join(category);
         for ext in &extensions {
-            let path = dir.join(icon_name).with_extension(ext);
-            if path.exists() {
-                fs::create_dir_all(&config.icon_cache_dir).ok()?;
-                let cached_path = config.icon_cache_dir.join(icon_name).with_extension(ext);
-                if fs::copy(&path, &cached_path).is_ok() {
-                    return cached_path.to_str().map(|s| s.to_string());
+            let icon_path = icon_dir.join(format!("{}.{}", icon, ext));
+            if icon_path.exists() {
+                return Some(icon_path);
+            }
+        }
+        None
+    };
+
+    // Search for the icon in all possible locations
+    let mut search_paths = Vec::new();
+
+    // Add Flatpak paths
+    search_paths.push(user_flatpak_base);
+    search_paths.push(system_flatpak_base);
+    search_paths.extend(system_icon_dirs);
+
+    for base_dir in search_paths {
+        for theme in &icon_themes {
+            for size in &icon_sizes {
+                for category in &categories {
+                    if let Some(path) = check_icon(&base_dir, theme, size, category, icon_name) {
+                        // Cache the found icon
+                        fs::create_dir_all(&config.icon_cache_dir).ok()?;
+                        let cached_path = config.icon_cache_dir.join(icon_name)
+                            .with_extension(path.extension().unwrap_or_default());
+                        if fs::copy(&path, &cached_path).is_ok() {
+                            return cached_path.to_str().map(|s| s.to_string());
+                        }
+                    }
                 }
+            }
+        }
+    }
+
+    // Final fallback: check directly in pixmaps
+    let pixmaps = Path::new("/usr/share/pixmaps");
+    for ext in &extensions {
+        let path = pixmaps.join(icon_name).with_extension(ext);
+        if path.exists() {
+            fs::create_dir_all(&config.icon_cache_dir).ok()?;
+            let cached_path = config.icon_cache_dir.join(icon_name).with_extension(ext);
+            if fs::copy(&path, &cached_path).is_ok() {
+                return cached_path.to_str().map(|s| s.to_string());
             }
         }
     }
