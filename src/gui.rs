@@ -131,92 +131,77 @@ impl eframe::App for EframeWrapper {
                         ui.horizontal(|ui| {
                             let mut settings_clicked = false;
 
-                            // Settings button (icon or text)
-                            if self.app.get_config().enable_icons {
-                                if let Some(icon_path) = self.app.get_icon_path(&app_name) {
-                                    // Load or retrieve the icon texture with cache validation
-                                    let texture = {
-                                        let cache_entry = self.icon_textures
-                                            .entry(icon_path.clone())
-                                            .or_default();
-                                        
-                                        let needs_reload = if let Ok(metadata) = std::fs::metadata(&icon_path) {
-                                            cache_entry.last_modified
-                                                .map(|last_mod| last_mod != metadata.modified().unwrap_or(last_mod))
-                                                .unwrap_or(true)
-                                        } else {
-                                            false
-                                        };
+                            // Create a container for the icon and settings button
+                            let icon_size = egui::Vec2::new(18.0, 18.0);
+                            let (icon_rect, icon_response) = ui.allocate_exact_size(icon_size, egui::Sense::click());
+                            
+                            if icon_response.clicked() && self.editing.is_none() {
+                                settings_clicked = true;
+                            }
 
-                                        if needs_reload || cache_entry.texture.is_none() {
-                                            if let Ok(img) = image::open(&icon_path) {
-                                                let img = img.into_rgba8();
-                                                let size = [img.width() as usize, img.height() as usize];
-                                                let image = egui::ColorImage::from_rgba_unmultiplied(size, &img);
-                                                cache_entry.texture = Some(ctx.load_texture("icon", image, Default::default()));
-                                                if let Ok(metadata) = std::fs::metadata(&icon_path) {
-                                                    cache_entry.last_modified = metadata.modified().ok();
-                                                }
-                                            }
-                                        }
-                                        
-                                        cache_entry.texture.clone()
+                            if ui.is_rect_visible(icon_rect) {
+                                // Load or create icon texture
+                                let texture = if let Some(icon_path) = self.app.get_icon_path(&app_name) {
+                                    let cache_entry = self.icon_textures
+                                        .entry(icon_path.clone())
+                                        .or_default();
+                                    
+                                    let needs_reload = if let Ok(metadata) = std::fs::metadata(&icon_path) {
+                                        cache_entry.last_modified
+                                            .map(|last_mod| last_mod != metadata.modified().unwrap_or(last_mod))
+                                            .unwrap_or(true)
+                                    } else {
+                                        false
                                     };
 
-                                    if let Some(texture) = texture {
-                                        // Use a slightly smaller size for a compact UI.
-                                        let desired_size = egui::Vec2::new(18.0, 18.0);
-                                        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
-                                        if response.clicked() && self.editing.is_none() {
-                                            settings_clicked = true;
-                                        }
-                                        if ui.is_rect_visible(rect) {
-                                            // Draw the application icon.
-                                            ui.painter().image(
-                                                texture.id(),
-                                                rect,
-                                                egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
-                                                egui::Color32::WHITE,
-                                            );
-                                            // Draw a tiny gear overlay in the top-right corner.
-                                            let gear_text = "⚙";
-                                            let gear_font = egui::TextStyle::Button.resolve(ui.style());
-                                            let gear_galley = ui.fonts(|fonts| {
-                                                fonts.layout_no_wrap(gear_text.to_string(), gear_font.clone(), egui::Color32::WHITE)
-                                            });
-                                            let gear_size = gear_galley.size();
-                                            let gear_pos = egui::Pos2::new(rect.max.x - gear_size.x, rect.min.y);
-                                            ui.painter().text(gear_pos, egui::Align2::LEFT_TOP, gear_text, gear_font, egui::Color32::WHITE);
-                                        }
-                                    } else {
-                                        // Fallback to text button if texture loading failed
-                                        let response = ui.add_sized(
-                                            egui::Vec2::new(18.0, 18.0),
-                                            egui::Button::new("⚙").frame(false)
-                                        );
-                                        if response.clicked() && self.editing.is_none() {
-                                            settings_clicked = true;
+                                    if needs_reload || cache_entry.texture.is_none() {
+                                        if let Ok(img) = image::open(&icon_path) {
+                                            let img = img.into_rgba8();
+                                            let size = [img.width() as usize, img.height() as usize];
+                                            let image = egui::ColorImage::from_rgba_unmultiplied(size, &img);
+                                            cache_entry.texture = Some(ctx.load_texture("icon", image, Default::default()));
+                                            if let Ok(metadata) = std::fs::metadata(&icon_path) {
+                                                cache_entry.last_modified = metadata.modified().ok();
+                                            }
                                         }
                                     }
+                                    
+                                    cache_entry.texture.clone()
                                 } else {
-                                    // Fallback to text button if no icon path available
-                                    let response = ui.add_sized(
-                                        egui::Vec2::new(18.0, 18.0),
-                                        egui::Button::new("⚙").frame(false)
+                                    // Create placeholder icon (gray square)
+                                    let mut pixels = vec![127u8; 4 * 16 * 16];  // 16x16 gray icon
+                                    let image = egui::ColorImage::from_rgba_unmultiplied([16, 16], &pixels);
+                                    Some(ctx.load_texture("placeholder", image, Default::default()))
+                                };
+
+                                // Draw the icon
+                                if let Some(texture) = texture {
+                                    ui.painter().image(
+                                        texture.id(),
+                                        icon_rect,
+                                        egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
+                                        egui::Color32::WHITE,
                                     );
-                                    if response.clicked() && self.editing.is_none() {
-                                        settings_clicked = true;
-                                    }
                                 }
-                            } else {
-                                // Icons disabled; use a text button
-                                let response = ui.add_sized(
-                                    egui::Vec2::new(18.0, 18.0),
-                                    egui::Button::new("⚙").frame(false)
+
+                                // Draw settings gear in top-right corner
+                                let gear_text = "⚙";
+                                let gear_font = egui::TextStyle::Button.resolve(ui.style());
+                                let gear_galley = ui.fonts(|fonts| {
+                                    fonts.layout_no_wrap(gear_text.to_string(), gear_font.clone(), egui::Color32::WHITE)
+                                });
+                                let gear_size = gear_galley.size();
+                                let gear_pos = egui::Pos2::new(
+                                    icon_rect.max.x - gear_size.x,
+                                    icon_rect.min.y - (gear_size.y * 0.2)  // Slightly adjust vertical position
                                 );
-                                if response.clicked() && self.editing.is_none() {
-                                    settings_clicked = true;
-                                }
+                                ui.painter().text(
+                                    gear_pos,
+                                    egui::Align2::RIGHT_TOP,
+                                    gear_text,
+                                    gear_font,
+                                    egui::Color32::from_rgb(64, 64, 64)
+                                );
                             }
 
                             // Application launch button
@@ -267,9 +252,8 @@ impl eframe::App for EframeWrapper {
                 });
             });
 
-            // Editing window for launch options
-            if let Some((app_name, options)) = self.editing.take() {
-                let mut new_options = options.clone();
+            // Launch options editing window
+            if let Some((app_name, mut options)) = self.editing.take() {
                 let mut save_pressed = false;
                 let mut cancel_pressed = false;
                 
@@ -277,7 +261,9 @@ impl eframe::App for EframeWrapper {
                     .collapsible(false)
                     .show(ctx, |ui| {
                         ui.label("Custom command and environment variables:");
-                        ui.text_edit_singleline(&mut new_options);
+                        if ui.text_edit_singleline(&mut options).changed() {
+                            // Changes are captured in options
+                        }
                         
                         ui.horizontal(|ui| {
                             if ui.button("Save").clicked() {
@@ -290,7 +276,7 @@ impl eframe::App for EframeWrapper {
                     });
 
                 if save_pressed {
-                    self.app.handle_input(&format!("LAUNCH_OPTIONS:{}:{}", app_name, new_options));
+                    self.app.handle_input(&format!("LAUNCH_OPTIONS:{}:{}", app_name, options));
                 } else if !cancel_pressed {
                     self.editing = Some((app_name, options));
                 }

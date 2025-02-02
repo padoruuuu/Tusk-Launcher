@@ -7,7 +7,15 @@ use std::{
 use xdg::BaseDirectories;
 use rayon::prelude::*;
 use serde::{Serialize, Deserialize};
-use crate::{config::Config, cache::{update_recent_apps, get_launch_options, update_launch_options}};
+use crate::{
+    config::Config,
+    cache::{
+        update_recent_apps,
+        get_launch_options,
+        update_launch_options,
+        resolve_icon_path
+    }
+};
 use crate::gui::AppInterface;
 use crate::config::{load_config, get_current_time_in_timezone};
 
@@ -94,105 +102,6 @@ fn search_applications(query: &str, applications: &[(String, String, String)], m
         .take(max_results)
         .cloned()
         .collect()
-}
-
-/// Resolves the icon path based on configuration and caches if needed.
-fn resolve_icon_path(icon_name: &str, config: &Config) -> Option<String> {
-    if icon_name.is_empty() || !config.enable_icons {
-        return None;
-    }
-
-    let icon_path = Path::new(icon_name);
-    if icon_path.is_absolute() {
-        return Some(icon_name.to_string());
-    }
-
-    let cached_base = config.icon_cache_dir.join(icon_name);
-    let extensions = ["png", "svg", "xpm"];
-    
-    // Check cache first
-    for ext in &extensions {
-        let cached_path = cached_base.with_extension(ext);
-        if cached_path.exists() {
-            return cached_path.to_str().map(|s| s.to_string());
-        }
-    }
-
-    // Define all possible icon sizes for Flatpak and system icons
-    let icon_sizes = ["512x512", "256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "16x16", "scalable"];
-    let categories = ["apps", "devices", "places", "mimetypes", "status", "actions"];
-
-    // Flatpak icon paths
-    let user_flatpak_base = dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from(".local/share"))
-        .join("flatpak/exports/share/icons");
-    let system_flatpak_base = PathBuf::from("/var/lib/flatpak/exports/share/icons");
-    
-    // System icon paths
-    let system_icon_dirs = vec![
-        PathBuf::from("/usr/share/icons"),
-        PathBuf::from("/usr/local/share/icons"),
-        dirs::data_local_dir()
-            .unwrap_or_else(|| PathBuf::from(".local/share"))
-            .join("icons"),
-        PathBuf::from("/usr/share/pixmaps"),
-    ];
-
-    // Common icon themes
-    let icon_themes = ["hicolor", "Adwaita", "gnome", "breeze", "oxygen"];
-
-    // Helper function to check icon existence in a directory
-    let check_icon = |base_dir: &Path, theme: &str, size: &str, category: &str, icon: &str| -> Option<PathBuf> {
-        let icon_dir = base_dir.join(theme).join(size).join(category);
-        for ext in &extensions {
-            let icon_path = icon_dir.join(format!("{}.{}", icon, ext));
-            if icon_path.exists() {
-                return Some(icon_path);
-            }
-        }
-        None
-    };
-
-    // Search for the icon in all possible locations
-    let mut search_paths = Vec::new();
-
-    // Add Flatpak paths
-    search_paths.push(user_flatpak_base);
-    search_paths.push(system_flatpak_base);
-    search_paths.extend(system_icon_dirs);
-
-    for base_dir in search_paths {
-        for theme in &icon_themes {
-            for size in &icon_sizes {
-                for category in &categories {
-                    if let Some(path) = check_icon(&base_dir, theme, size, category, icon_name) {
-                        // Cache the found icon
-                        fs::create_dir_all(&config.icon_cache_dir).ok()?;
-                        let cached_path = config.icon_cache_dir.join(icon_name)
-                            .with_extension(path.extension().unwrap_or_default());
-                        if fs::copy(&path, &cached_path).is_ok() {
-                            return cached_path.to_str().map(|s| s.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Final fallback: check directly in pixmaps
-    let pixmaps = Path::new("/usr/share/pixmaps");
-    for ext in &extensions {
-        let path = pixmaps.join(icon_name).with_extension(ext);
-        if path.exists() {
-            fs::create_dir_all(&config.icon_cache_dir).ok()?;
-            let cached_path = config.icon_cache_dir.join(icon_name).with_extension(ext);
-            if fs::copy(&path, &cached_path).is_ok() {
-                return cached_path.to_str().map(|s| s.to_string());
-            }
-        }
-    }
-
-    None
 }
 
 /// Launches an application.
