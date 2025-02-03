@@ -169,7 +169,7 @@ impl eframe::App for EframeWrapper {
                                     cache_entry.texture.clone()
                                 } else {
                                     // Create placeholder icon (gray square)
-                                    let mut pixels = vec![127u8; 4 * 16 * 16];  // 16x16 gray icon
+                                    let pixels = vec![127u8; 4 * 16 * 16];  // 16x16 gray icon
                                     let image = egui::ColorImage::from_rgba_unmultiplied([16, 16], &pixels);
                                     Some(ctx.load_texture("placeholder", image, Default::default()))
                                 };
@@ -186,14 +186,14 @@ impl eframe::App for EframeWrapper {
 
                                 // Draw settings gear in top-right corner
                                 let gear_text = "⚙";
-                                let gear_font = egui::TextStyle::Button.resolve(ui.style());
+                                                               let gear_font = egui::TextStyle::Button.resolve(ui.style());
                                 let gear_galley = ui.fonts(|fonts| {
                                     fonts.layout_no_wrap(gear_text.to_string(), gear_font.clone(), egui::Color32::WHITE)
                                 });
                                 let gear_size = gear_galley.size();
                                 let gear_pos = egui::Pos2::new(
                                     icon_rect.max.x - gear_size.x,
-                                    icon_rect.min.y - (gear_size.y * 0.2)  // Slightly adjust vertical position
+                                    icon_rect.min.y - (gear_size.y * 0.2)
                                 );
                                 ui.painter().text(
                                     gear_pos,

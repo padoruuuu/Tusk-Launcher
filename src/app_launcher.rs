@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, Stdio},
 };
 use xdg::BaseDirectories;
@@ -46,7 +46,7 @@ fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
                 "StartupWMClass" if wl_class.is_none() => wl_class = Some(value.to_string()),
                 _ => (),
             }
-            if name.is_some() && exec.is_some() && icon.is_some() {
+            if name.is_some() && exec.is_some() && icon.is_none() {
                 // break;
             }
         }
