@@ -20,7 +20,7 @@ fn acquire_pid_lock() -> io::Result<File> {
     let pid_file = OpenOptions::new()
         .write(true)
         .create(true)
-        .truncate(false)
+        .truncate(true)  // Fixed: Truncate the file to clear previous contents
         .mode(0o644)
         .open("/tmp/your_app.pid")?;
 
