@@ -2,8 +2,6 @@ use std::error::Error;
 use std::collections::HashMap;
 use std::fs::File;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
-use std::time::Duration;
 use eframe::egui;
 use libc::{self, pid_t, SIGUSR1};
 use std::os::fd::FromRawFd;
@@ -29,6 +27,7 @@ pub struct EframeGui;
 
 impl EframeGui {
     pub fn run(app: Box<dyn AppInterface>, pid_file: File) -> Result<(), Box<dyn Error>> {
+        // Register SIGUSR1 handler to set the FOCUS_REQUESTED flag.
         unsafe {
             libc::signal(SIGUSR1, handle_sigusr1 as libc::sighandler_t);
         }
@@ -49,16 +48,8 @@ impl EframeGui {
             ctrl
         };
 
-        thread::spawn(|| {
-            loop {
-                if FOCUS_REQUESTED.load(Ordering::Relaxed) {
-                    Self::focus_window();
-                    FOCUS_REQUESTED.store(false, Ordering::Relaxed);
-                }
-                thread::sleep(Duration::from_millis(500));
-            }
-        });
-
+        // Instead of spawning a separate thread to handle focus requests with a new default context,
+        // we remove that thread and will check FOCUS_REQUESTED in our update() function.
         eframe::run_native(
             "Application Launcher",
             native_options,
@@ -78,11 +69,7 @@ impl EframeGui {
         Ok(())
     }
 
-    fn focus_window() {
-        let ctx = eframe::egui::Context::default();
-        let viewport_id = ctx.viewport_id();
-        ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::Focus);
-    }
+    // Removed the separate focus_window() function that created a new default context.
 }
 
 #[derive(Default)]
@@ -103,6 +90,11 @@ struct EframeWrapper {
 
 impl eframe::App for EframeWrapper {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // NEW: Check for a focus request using the _active_ context.
+        if FOCUS_REQUESTED.swap(false, Ordering::Relaxed) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+
         self.app.update();
 
         if self.audio_controller.update_volume().is_ok() {
@@ -186,7 +178,7 @@ impl eframe::App for EframeWrapper {
 
                                 // Draw settings gear in top-right corner
                                 let gear_text = "⚙";
-                                                               let gear_font = egui::TextStyle::Button.resolve(ui.style());
+                                let gear_font = egui::TextStyle::Button.resolve(ui.style());
                                 let gear_galley = ui.fonts(|fonts| {
                                     fonts.layout_no_wrap(gear_text.to_string(), gear_font.clone(), egui::Color32::WHITE)
                                 });
@@ -262,7 +254,7 @@ impl eframe::App for EframeWrapper {
                     .show(ctx, |ui| {
                         ui.label("Custom command and environment variables:");
                         if ui.text_edit_singleline(&mut options).changed() {
-                            // Changes are captured in options
+                            // Capture changes in options.
                         }
                         
                         ui.horizontal(|ui| {

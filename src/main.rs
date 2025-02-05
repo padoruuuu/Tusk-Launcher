@@ -20,15 +20,17 @@ fn acquire_pid_lock() -> io::Result<File> {
     let pid_file = OpenOptions::new()
         .write(true)
         .create(true)
-        .truncate(true)  // Fixed: Truncate the file to clear previous contents
+        .truncate(true) // Clear previous contents
         .mode(0o644)
         .open("/tmp/your_app.pid")?;
 
+    // Attempt to acquire an exclusive non-blocking lock.
     let ret = unsafe { libc::flock(pid_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if ret != 0 {
         return Err(io::Error::last_os_error());
     }
 
+    // Write our process id into the file.
     write!(&pid_file, "{}", process::id())?;
     Ok(pid_file)
 }
@@ -37,6 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pid_file = match acquire_pid_lock() {
         Ok(file) => file,
         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+            // Focus the existing instance if lock is held.
             if let Err(e) = gui::send_focus_signal() {
                 eprintln!("Failed to focus existing instance: {}", e);
             }
@@ -50,7 +53,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Current time: {}", current_time);
 
     let app = Box::new(app_launcher::AppLauncher::default());
-    let result = EframeGui::run(app, pid_file);
-
-    result
+    // Directly return the result from running the GUI.
+    EframeGui::run(app, pid_file)
 }
