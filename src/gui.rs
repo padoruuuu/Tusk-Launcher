@@ -33,13 +33,15 @@ impl EframeGui {
         }
 
         let native_options = eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default()
-                .with_inner_size([350.0, 500.0])
-                .with_always_on_top()
-                .with_decorations(true)
-                .with_active(true),
-            ..Default::default()
-        };
+    viewport: egui::ViewportBuilder::default()
+        .with_inner_size([300.0, 200.0])
+        .with_always_on_top()
+        .with_decorations(true)
+        .with_resizable(false) // Prevent resizing to enforce a fixed floating size
+        .with_active(true),
+    ..Default::default()
+};
+
 
         let audio_controller = {
             let config = app.get_config();
