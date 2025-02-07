@@ -15,3 +15,5 @@ rayon = "1.8.1"
 toml = "0.8.10"
 image = "0.24"
 libc = "0.2"
+resvg = { version = "0.36", features = ["default"] }
+usvg = "0.36"
