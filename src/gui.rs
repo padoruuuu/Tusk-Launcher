@@ -1,19 +1,14 @@
 use std::{
     error::Error,
-    collections::HashMap,
-    fs::{File, read, metadata, remove_file, read_to_string},
+    fs::{File, remove_file, read_to_string},
     mem,
     os::fd::FromRawFd,
     sync::atomic::{AtomicBool, Ordering},
-    time,
 };
 use eframe::egui;
 use libc::{self, pid_t, SIGUSR1};
-use resvg::usvg::{self, TreeParsing, TreeTextToPath};
-use resvg::tiny_skia::Pixmap;
-use resvg::Tree;
-use image;
-use crate::{config::Config, app_launcher::AppLaunchOptions, audio::AudioController};
+use crate::{config::Config, app_launcher::AppLaunchOptions, audio::AudioController, cache::IconManager};
+
 
 static FOCUS_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -55,18 +50,12 @@ impl EframeGui {
                 current_volume: 0.0,
                 editing: None,
                 focused: false,
-                icon_textures: HashMap::new(),
+                icon_manager: IconManager::new(),
                 pid_file,
             })
         }))?;
         Ok(())
     }
-}
-
-#[derive(Default)]
-struct IconCache {
-    texture: Option<egui::TextureHandle>,
-    last_modified: Option<time::SystemTime>,
 }
 
 struct EframeWrapper {
@@ -75,65 +64,8 @@ struct EframeWrapper {
     current_volume: f32,
     editing: Option<(String, String)>,
     focused: bool,
-    icon_textures: HashMap<String, IconCache>,
+    icon_manager: IconManager,
     pid_file: File,
-}
-
-impl EframeWrapper {
-    fn get_texture(&mut self, ctx: &egui::Context, icon_path: &str) -> Option<egui::TextureHandle> {
-        let reload = self.icon_textures.get(icon_path).map_or(true, |cache| {
-            metadata(icon_path)
-                .map(|m| cache.last_modified.map_or(true, |lm| lm != m.modified().unwrap_or(lm)))
-                .unwrap_or(true)
-        });
-        if reload {
-            let img = if icon_path.ends_with(".svg") {
-                Self::load_svg(icon_path).unwrap_or_else(|_| Self::create_placeholder())
-            } else {
-                image::open(icon_path)
-                    .map(|img| {
-                        let img = img.into_rgba8();
-                        egui::ColorImage::from_rgba_unmultiplied(
-                            [img.width() as usize, img.height() as usize],
-                            &img,
-                        )
-                    })
-                    .unwrap_or_else(|_| Self::create_placeholder())
-            };
-            let tex = ctx.load_texture(icon_path, img, Default::default());
-            self.icon_textures.insert(
-                icon_path.to_owned(),
-                IconCache {
-                    texture: Some(tex.clone()),
-                    last_modified: metadata(icon_path).and_then(|m| m.modified()).ok(),
-                },
-            );
-            Some(tex)
-        } else {
-            self.icon_textures.get(icon_path).and_then(|cache| cache.texture.clone())
-        }
-    }
-
-    fn load_svg(path: &str) -> Result<egui::ColorImage, Box<dyn Error>> {
-        let data = read(path)?;
-        let mut tree = usvg::Tree::from_data(&data, &usvg::Options::default())?;
-        tree.convert_text(&usvg::fontdb::Database::new());
-        let pixmap_size = tree.size.to_int_size();
-        let mut pixmap = Pixmap::new(pixmap_size.width(), pixmap_size.height())
-            .ok_or("Failed to create pixmap")?;
-        {
-            let mut pm = pixmap.as_mut();
-            Tree::from_usvg(&tree).render(usvg::Transform::default(), &mut pm);
-        }
-        Ok(egui::ColorImage::from_rgba_unmultiplied(
-            [pixmap_size.width() as usize, pixmap_size.height() as usize],
-            pixmap.data(),
-        ))
-    }
-
-    fn create_placeholder() -> egui::ColorImage {
-        egui::ColorImage::from_rgba_unmultiplied([16, 16], &[127u8; 16 * 16 * 4])
-    }
 }
 
 impl eframe::App for EframeWrapper {
@@ -149,10 +81,7 @@ impl eframe::App for EframeWrapper {
             ui.vertical(|ui| {
                 let mut query = self.app.get_query();
                 let resp = ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search..."));
-                if !self.focused {
-                    resp.request_focus();
-                    self.focused = true;
-                }
+                if !self.focused { resp.request_focus(); self.focused = true; }
                 if resp.changed() && !query.starts_with("LAUNCH_OPTIONS:") {
                     self.app.handle_input(&query);
                 }
@@ -163,13 +92,10 @@ impl eframe::App for EframeWrapper {
                             let mut settings_clicked = false;
                             let icon_size = egui::Vec2::splat(18.0);
                             let (icon_rect, icon_resp) = ui.allocate_exact_size(icon_size, egui::Sense::click());
-                            if icon_resp.clicked() && self.editing.is_none() {
-                                settings_clicked = true;
-                            }
+                            if icon_resp.clicked() && self.editing.is_none() { settings_clicked = true; }
                             if ui.is_rect_visible(icon_rect) {
                                 let tex = self.app.get_icon_path(&app_name)
-                                    .and_then(|p| self.get_texture(ctx, &p))
-                                    .or_else(|| Some(ctx.load_texture("placeholder", Self::create_placeholder(), Default::default())));
+                                    .and_then(|p| self.icon_manager.get_texture(ctx, &p));
                                 if let Some(tex) = tex {
                                     ui.painter().image(
                                         tex.id(),
@@ -190,9 +116,7 @@ impl eframe::App for EframeWrapper {
                             if settings_clicked {
                                 let opts = if self.app.get_launch_options(&app_name).is_some() {
                                     self.app.start_launch_options_edit(&app_name)
-                                } else {
-                                    String::new()
-                                };
+                                } else { String::new() };
                                 self.editing = Some((app_name.clone(), opts));
                             }
                         });
@@ -201,10 +125,8 @@ impl eframe::App for EframeWrapper {
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                     if self.app.get_config().enable_power_options {
                         ui.horizontal(|ui| {
-                            for (l, c) in [("Power", "P"), ("Restart", "R"), ("Logout", "L")] {
-                                if ui.button(l).clicked() {
-                                    self.app.handle_input(c);
-                                }
+                            for &(l, c) in &[("Power", "P"), ("Restart", "R"), ("Logout", "L")] {
+                                if ui.button(l).clicked() { self.app.handle_input(c); }
                             }
                         });
                         ui.add_space(5.0);
@@ -263,15 +185,14 @@ impl eframe::App for EframeWrapper {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
-
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         let _ = mem::replace(&mut self.pid_file, unsafe { File::from_raw_fd(-1) });
         let _ = remove_file("/tmp/your_app.pid");
     }
 }
 
-extern "C" fn handle_sigusr1(_: libc::c_int) {
-    FOCUS_REQUESTED.store(true, Ordering::Relaxed);
+extern "C" fn handle_sigusr1(_: libc::c_int) { 
+    FOCUS_REQUESTED.store(true, Ordering::Relaxed); 
 }
 
 pub fn send_focus_signal() -> Result<(), Box<dyn Error>> {
