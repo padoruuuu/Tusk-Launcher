@@ -4,11 +4,11 @@ use std::{
     mem,
     os::fd::FromRawFd,
     sync::atomic::{AtomicBool, Ordering},
+    io,
 };
 use eframe::egui;
 use libc::{self, pid_t, SIGUSR1};
 use crate::{config::Config, app_launcher::AppLaunchOptions, audio::AudioController, cache::IconManager};
-
 
 static FOCUS_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -185,6 +185,7 @@ impl eframe::App for EframeWrapper {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
+    
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         let _ = mem::replace(&mut self.pid_file, unsafe { File::from_raw_fd(-1) });
         let _ = remove_file("/tmp/your_app.pid");
@@ -196,12 +197,36 @@ extern "C" fn handle_sigusr1(_: libc::c_int) {
 }
 
 pub fn send_focus_signal() -> Result<(), Box<dyn Error>> {
-    let pid: pid_t = read_to_string("/tmp/your_app.pid")?
-        .trim()
-        .parse()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    if unsafe { libc::kill(pid, SIGUSR1) } != 0 {
-        return Err(std::io::Error::last_os_error().into());
+    let content = read_to_string("/tmp/your_app.pid")?;
+    let content = content.trim();
+    
+    if content.is_empty() {
+        return Err(Box::new(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "PID file is empty"
+        )));
     }
+
+    let pid: pid_t = content.parse().map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Invalid PID format: {}", e)
+        )
+    })?;
+
+    // Verify PID exists before sending signal
+    if unsafe { libc::kill(pid, 0) } != 0 {
+        // Process doesn't exist
+        let _ = remove_file("/tmp/your_app.pid");
+        return Err(Box::new(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Process with PID {} does not exist", pid)
+        )));
+    }
+
+    if unsafe { libc::kill(pid, SIGUSR1) } != 0 {
+        return Err(Box::new(std::io::Error::last_os_error()));
+    }
+
     Ok(())
 }
