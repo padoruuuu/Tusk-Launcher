@@ -110,7 +110,8 @@ fn launch_app(app_name: &str, exec_cmd: &str, options: &Option<AppLaunchOptions>
         update_recent_apps(app_name, true)?;
     }
 
-    let home_dir = dirs::home_dir().ok_or("No home directory")?;
+    // Replace dirs::home_dir() with using the HOME environment variable.
+    let home_dir = std::env::var("HOME").map(PathBuf::from).map_err(|_| "No home directory")?;
     let (cmd, dir) = if let Some(opts) = options {
         (
             opts.custom_command.as_deref().unwrap_or(exec_cmd),

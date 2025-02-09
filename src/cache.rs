@@ -18,9 +18,14 @@ use resvg::{
 };
 
 use crate::{app_launcher::AppLaunchOptions, config::Config};
+use xdg::BaseDirectories;
 
+// Create CACHE_FILE using the XDG BaseDirectories API in place of dirs::config_dir().
 static CACHE_FILE: Lazy<PathBuf> = Lazy::new(|| {
-    let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("tusk-launcher");
+    let config_home = BaseDirectories::new()
+        .map(|bd| bd.get_config_home().to_owned())
+        .unwrap_or_else(|_| PathBuf::from("."));
+    let mut path = config_home.join("tusk-launcher");
     fs::create_dir_all(&path).expect("Failed to create config directory");
     path.push("app_cache.toml");
     path
@@ -31,6 +36,7 @@ pub struct AppCache {
     pub recent_apps: VecDeque<String>,
     pub launch_options: HashMap<String, AppLaunchOptions>,
 }
+
 impl Default for AppCache {
     fn default() -> Self {
         Self {
@@ -167,8 +173,10 @@ pub fn resolve_icon_path(icon_name: &str, config: &Config) -> Option<String> {
 
     let icon_sizes = ["512x512", "256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "16x16", "scalable"];
     let categories = ["apps", "devices", "places", "mimetypes", "status", "actions"];
-    let user_flatpak_base = dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from(".local/share"))
+    // Replace dirs::data_local_dir() with xdg's get_data_home()
+    let user_flatpak_base = BaseDirectories::new()
+        .map(|bd| bd.get_data_home().to_owned())
+        .unwrap_or_else(|_| PathBuf::from(".local/share"))
         .join("flatpak/exports/share/icons");
     let system_flatpak_base = PathBuf::from("/var/lib/flatpak/exports/share/icons");
     let search_paths = vec![
@@ -176,8 +184,9 @@ pub fn resolve_icon_path(icon_name: &str, config: &Config) -> Option<String> {
         system_flatpak_base,
         PathBuf::from("/usr/share/icons"),
         PathBuf::from("/usr/local/share/icons"),
-        dirs::data_local_dir()
-            .unwrap_or_else(|| PathBuf::from(".local/share"))
+        BaseDirectories::new()
+            .map(|bd| bd.get_data_home().to_owned())
+            .unwrap_or_else(|_| PathBuf::from(".local/share"))
             .join("icons"),
         PathBuf::from("/usr/share/pixmaps"),
     ];
