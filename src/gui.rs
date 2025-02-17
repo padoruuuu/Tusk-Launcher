@@ -1,15 +1,14 @@
 use std::{
     collections::HashMap,
     error::Error,
-    fs::{File, remove_file, read_to_string, create_dir_all, OpenOptions},
-    io::{self, Write},
-    mem,
-    os::fd::FromRawFd,
+    fs::{read_to_string, create_dir_all, OpenOptions},
+    io::Write,
 };
+use std::fs::File;
 
 use eframe::egui;
 use eframe::glow::HasContext;
-use libc::{self, pid_t, SIGUSR1};
+use libc::SIGUSR1;
 use crate::{config::Config, app_launcher::AppLaunchOptions, audio::AudioController, cache::IconManager};
 use xdg;
 
@@ -315,7 +314,7 @@ pub trait AppInterface {
 pub struct EframeGui;
 
 impl EframeGui {
-    pub fn run(app: Box<dyn AppInterface>, pid_file: File) -> Result<(), Box<dyn Error>> {
+    pub fn run(app: Box<dyn AppInterface>) -> Result<(), Box<dyn Error>> {
         let theme = Theme::load_or_create()?;
 
         unsafe {
@@ -333,9 +332,10 @@ impl EframeGui {
             ..Default::default()
         };
 
-        let config = app.get_config();
-        let audio_controller = AudioController::new(config)?;
-        audio_controller.start_polling(config);
+        // Rename variable to _config to silence the unused variable warning.
+        let _config = app.get_config();
+        let audio_controller = AudioController::new(_config)?;
+        audio_controller.start_polling(_config);
 
         eframe::run_native("Application Launcher", native_options, Box::new(|cc| {
             let wrapper = EframeWrapper {
@@ -345,7 +345,6 @@ impl EframeGui {
                 editing: None,
                 focused: false,
                 icon_manager: IconManager::new(),
-                pid_file,
                 theme,
             };
 
@@ -368,6 +367,13 @@ impl EframeGui {
     }
 }
 
+#[allow(dead_code)]
+struct PidFileGuard(#[allow(dead_code)] File);
+
+impl PidFileGuard {
+    // Implementation details (if any) go here.
+}
+
 struct EframeWrapper {
     app: Box<dyn AppInterface>,
     audio_controller: AudioController,
@@ -375,7 +381,6 @@ struct EframeWrapper {
     editing: Option<(String, String)>,
     focused: bool,
     icon_manager: IconManager,
-    pid_file: File,
     theme: Theme,
 }
 
@@ -604,46 +609,8 @@ impl eframe::App for EframeWrapper {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
-
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        let _ = mem::replace(&mut self.pid_file, unsafe { File::from_raw_fd(-1) });
-        let _ = remove_file("/tmp/tusk-launcher.pid");
-    }
 }
 
 extern "C" fn handle_sigusr1(_: libc::c_int) {
     FOCUS_REQUESTED.store(true, std::sync::atomic::Ordering::Relaxed);
-}
-
-pub fn send_focus_signal() -> Result<(), Box<dyn Error>> {
-    let content = read_to_string("/tmp/tusk-launcher.pid")?;
-    let content = content.trim();
-
-    if content.is_empty() {
-        return Err(Box::new(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "PID file is empty"
-        )));
-    }
-
-    let pid: pid_t = content.parse().map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Invalid PID format: {}", e)
-        )
-    })?;
-
-    if unsafe { libc::kill(pid, 0) } != 0 {
-        let _ = remove_file("/tmp/tusk-launcher.pid");
-        return Err(Box::new(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Process with PID {} does not exist", pid)
-        )));
-    }
-
-    if unsafe { libc::kill(pid, SIGUSR1) } != 0 {
-        return Err(Box::new(std::io::Error::last_os_error()));
-    }
-
-    Ok(())
 }
