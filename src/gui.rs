@@ -17,22 +17,28 @@ struct Rule {
     props: HashMap<String, String>,
 }
 const DEFAULT_THEME: &str = "";
-struct Theme { rules: Vec<Rule> }
+struct Theme {
+    rules: Vec<Rule>,
+}
 
 impl Theme {
     fn load_or_create() -> Result<Self, Box<dyn Error>> {
         let dirs = xdg::BaseDirectories::new()?;
         let path = dirs.place_config_file("tusk-launcher/theme.css")?;
-        if let Some(p) = path.parent() { create_dir_all(p)?; }
+        if let Some(p) = path.parent() {
+            create_dir_all(p)?;
+        }
         if !path.exists() {
             let mut file = OpenOptions::new().write(true).create(true).open(&path)?;
             file.write_all(DEFAULT_THEME.as_bytes())?;
         }
         let css = read_to_string(&path)?;
-        Ok(Self { rules: Self::parse_css_rules(&css) })
+        Ok(Self {
+            rules: Self::parse_css_rules(&css),
+        })
     }
 
-    /// Updated parser that never skips rules containing `position` or `layout`.
+    /// Parser that processes every `.class { ... }` rule, including position/layout.
     fn parse_css_rules(css: &str) -> Vec<Rule> {
         let mut rules = Vec::new();
         let mut rest = css;
@@ -51,7 +57,6 @@ impl Theme {
                 break;
             }
             let class_sel = rest[..class_end].trim();
-            // No pseudo-class skipping here. We parse every rule that starts with '.'.
             let class_name = class_sel.to_string();
             if let Some(brace) = rest.find('{') {
                 let after = &rest[brace + 1..];
@@ -59,7 +64,9 @@ impl Theme {
                     let block = &after[..end];
                     let props = block.split(';').filter_map(|decl| {
                         let decl = decl.trim();
-                        if decl.is_empty() { None } else {
+                        if decl.is_empty() {
+                            None
+                        } else {
                             let mut parts = decl.splitn(2, ':');
                             Some((
                                 parts.next()?.trim().to_string(),
@@ -80,7 +87,12 @@ impl Theme {
     }
 
     fn get_style(&self, class: &str, prop: &str) -> Option<String> {
-        self.rules.iter().find(|r| r.class_name == class)?.props.get(prop).cloned()
+        self.rules
+            .iter()
+            .find(|r| r.class_name == class)?
+            .props
+            .get(prop)
+            .cloned()
     }
 
     fn parse_color(&self, s: &str) -> Option<egui::Color32> {
@@ -108,27 +120,39 @@ impl Theme {
     }
 
     fn get_order(&self, section: &str) -> i32 {
-        self.get_style(section, "order").and_then(|s| s.parse().ok()).unwrap_or(0)
+        self.get_style(section, "order")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0)
     }
-
     fn get_layout(&self, section: &str) -> Option<String> {
         self.get_style(section, "layout")
     }
-
     fn apply_style(&self, ui: &mut egui::Ui, class: &str) {
         let style = ui.style_mut();
-        if let Some(bg) = self.get_style(class, "background-color").and_then(|s| self.parse_color(&s)) {
+        if let Some(bg) = self
+            .get_style(class, "background-color")
+            .and_then(|s| self.parse_color(&s))
+        {
             style.visuals.window_fill = bg;
             style.visuals.panel_fill = bg;
         }
-        if let Some(col) = self.get_style(class, "color").and_then(|s| self.parse_color(&s)) {
+        if let Some(col) = self
+            .get_style(class, "color")
+            .and_then(|s| self.parse_color(&s))
+        {
             style.visuals.override_text_color = Some(col);
         }
-        if let Some(pad) = self.get_style(class, "padding").and_then(|s| s.replace("px", "").parse::<f32>().ok()) {
+        if let Some(pad) = self
+            .get_style(class, "padding")
+            .and_then(|s| s.replace("px", "").parse::<f32>().ok())
+        {
             style.spacing.item_spacing = egui::Vec2::splat(pad);
             style.spacing.window_margin = egui::Margin::same(pad);
         }
-        if let Some(rad) = self.get_style(class, "border-radius").and_then(|s| s.replace("px", "").parse::<f32>().ok()) {
+        if let Some(rad) = self
+            .get_style(class, "border-radius")
+            .and_then(|s| s.replace("px", "").parse::<f32>().ok())
+        {
             let r = egui::Rounding::same(rad);
             style.visuals.window_rounding = r;
             style.visuals.widgets.noninteractive.rounding = r;
@@ -136,7 +160,10 @@ impl Theme {
             style.visuals.widgets.hovered.rounding = r;
             style.visuals.widgets.active.rounding = r;
         }
-        if let Some(sz) = self.get_style(class, "font-size").and_then(|s| s.replace("px", "").parse::<f32>().ok()) {
+        if let Some(sz) = self
+            .get_style(class, "font-size")
+            .and_then(|s| s.replace("px", "").parse::<f32>().ok())
+        {
             if let Some(text) = ui.style_mut().text_styles.get_mut(&egui::TextStyle::Body) {
                 text.size = sz;
             }
@@ -156,21 +183,30 @@ fn with_custom_style<R>(
     res
 }
 
-/// Supports `position: left/center/right` or `align: left/center/right` as a fallback.
-fn with_alignment<R>(ui: &mut egui::Ui, theme: &Theme, section: &str, f: impl FnOnce(&mut egui::Ui) -> R) -> R {
+/// Modified alignment helper: for "app-list", we use a vertical centered layout.
+fn with_alignment<R>(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    section: &str,
+    f: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    if section == "app-list" {
+        // Use vertical_centered and extract the inner value.
+        return ui.vertical_centered(f).inner;
+    }
     if let Some(pos) = theme.get_style(section, "position") {
         let layout = match pos.as_str() {
             "center" => egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-            "left"   => egui::Layout::left_to_right(egui::Align::Min),
-            "right"  => egui::Layout::right_to_left(egui::Align::Max),
+            "left" => egui::Layout::left_to_right(egui::Align::Min),
+            "right" => egui::Layout::right_to_left(egui::Align::Max),
             _ => egui::Layout::default(),
         };
         ui.with_layout(layout, f).inner
     } else if let Some(align) = theme.get_style(section, "align") {
         let layout = match align.as_str() {
             "center" => egui::Layout::left_to_right(egui::Align::Center),
-            "right"  => egui::Layout::right_to_left(egui::Align::Center),
-            "left"   => egui::Layout::left_to_right(egui::Align::Min),
+            "right" => egui::Layout::right_to_left(egui::Align::Center),
+            "left" => egui::Layout::left_to_right(egui::Align::Min),
             _ => egui::Layout::default(),
         };
         ui.with_layout(layout, f).inner
@@ -197,7 +233,9 @@ pub struct EframeGui;
 impl EframeGui {
     pub fn run(app: Box<dyn AppInterface>) -> Result<(), Box<dyn Error>> {
         let theme = Theme::load_or_create()?;
-        unsafe { libc::signal(SIGUSR1, handle_sigusr1 as libc::sighandler_t); }
+        unsafe {
+            libc::signal(SIGUSR1, handle_sigusr1 as libc::sighandler_t);
+        }
         let native_options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
                 .with_inner_size([300.0, 200.0])
@@ -241,16 +279,22 @@ impl EframeWrapper {
     fn render_search_bar(&mut self, ui: &mut egui::Ui) {
         with_alignment(ui, &self.theme, "search-bar", |ui| {
             self.theme.apply_style(ui, "search-bar");
-            let bg = self.theme.get_style("search-bar", "background-color")
+            let bg = self
+                .theme
+                .get_style("search-bar", "background-color")
                 .and_then(|s| self.theme.parse_color(&s))
                 .unwrap_or(ui.visuals().window_fill);
-            let rounding = self.theme.get_style("search-bar", "border-radius")
+            let rounding = self
+                .theme
+                .get_style("search-bar", "border-radius")
                 .and_then(|s| s.replace("px", "").parse::<f32>().ok())
                 .map(egui::Rounding::same)
                 .unwrap_or_default();
             egui::Frame::none().fill(bg).rounding(rounding).show(ui, |ui| {
                 with_custom_style(ui, |s| {
-                    if let Some(c) = self.theme.get_style("search-bar", "color")
+                    if let Some(c) = self
+                        .theme
+                        .get_style("search-bar", "color")
                         .and_then(|s| self.theme.parse_color(&s))
                     {
                         s.visuals.override_text_color = Some(c);
@@ -274,7 +318,9 @@ impl EframeWrapper {
         with_alignment(ui, &self.theme, "volume-slider", |ui| {
             self.theme.apply_style(ui, "volume-slider");
             ui.horizontal(|ui| {
-                if let Some(gap) = self.theme.get_style("volume-slider", "gap")
+                if let Some(gap) = self
+                    .theme
+                    .get_style("volume-slider", "gap")
                     .and_then(|s| s.replace("px", "").parse::<f32>().ok())
                 {
                     ui.spacing_mut().item_spacing.x = gap;
@@ -283,12 +329,16 @@ impl EframeWrapper {
                 let vol = &mut self.current_volume;
                 let slider_visuals = {
                     let mut v = ui.style().visuals.widgets.inactive.clone();
-                    if let Some(bg) = self.theme.get_style("volume-slider", "background-color")
+                    if let Some(bg) = self
+                        .theme
+                        .get_style("volume-slider", "background-color")
                         .and_then(|s| self.theme.parse_color(&s))
                     {
                         v.bg_fill = bg;
                     }
-                    v.rounding = self.theme.get_style("volume-slider", "border-radius")
+                    v.rounding = self
+                        .theme
+                        .get_style("volume-slider", "border-radius")
                         .and_then(|s| s.replace("px", "").parse::<f32>().ok())
                         .map(egui::Rounding::same)
                         .unwrap_or_default();
@@ -298,6 +348,11 @@ impl EframeWrapper {
                     s.visuals.widgets.inactive = slider_visuals.clone();
                     s.visuals.widgets.hovered = slider_visuals.clone();
                     s.visuals.widgets.active = slider_visuals;
+                    s.visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+                    s.visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+                    s.visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+                    s.visuals.widgets.hovered.expansion = 0.0;
+                    s.visuals.widgets.active.expansion = 0.0;
                 }, |ui| {
                     let slider = egui::Slider::new(vol, 0.0..=self.app.get_config().max_volume)
                         .custom_formatter(|n, _| format!("{:.0}%", n * 100.0))
@@ -321,15 +376,20 @@ impl EframeWrapper {
             self.theme.apply_style(ui, "app-list");
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for app_name in self.app.get_search_results() {
-                    let item_bg = self.theme.get_style("app-item", "background-color")
+                    let item_bg = self
+                        .theme
+                        .get_style("app-item", "background-color")
                         .and_then(|s| self.theme.parse_color(&s))
                         .unwrap_or(egui::Color32::TRANSPARENT);
-                    let rounding = self.theme.get_style("app-item", "border-radius")
+                    let rounding = self
+                        .theme
+                        .get_style("app-item", "border-radius")
                         .and_then(|s| s.replace("px", "").parse::<f32>().ok())
                         .map(egui::Rounding::same)
                         .unwrap_or_default();
                     egui::Frame::none()
                         .fill(item_bg)
+                        .stroke(egui::Stroke::NONE)
                         .rounding(rounding)
                         .inner_margin(egui::Margin::symmetric(6.0, 4.0))
                         .show(ui, |ui| {
@@ -342,7 +402,9 @@ impl EframeWrapper {
                                     settings_clicked = true;
                                 }
                                 if ui.is_rect_visible(icon_rect) {
-                                    if let Some(tex) = self.app.get_icon_path(&app_name)
+                                    if let Some(tex) = self
+                                        .app
+                                        .get_icon_path(&app_name)
                                         .and_then(|p| self.icon_manager.get_texture(ctx, &p))
                                     {
                                         ui.painter().image(
@@ -355,7 +417,6 @@ impl EframeWrapper {
                                             egui::Color32::WHITE,
                                         );
                                     }
-                                    // Draw gear icon
                                     let gear = "⚙";
                                     let gear_font = egui::TextStyle::Button.resolve(ui.style());
                                     let gear_size = ui.fonts(|f| {
@@ -386,22 +447,24 @@ impl EframeWrapper {
                                     };
                                     self.editing = Some((app_name.clone(), opts));
                                 } else {
-                                    // Apply button styling from CSS (including stroke = NONE).
+                                    // Render the app list button similarly to the power buttons.
                                     with_custom_style(ui, |s| {
-                                        if let Some(bg) = self.theme
-                                            .get_style("app-button", "background-color")
+                                        let bg = self.theme.get_style("app-button", "background-color")
                                             .and_then(|v| self.theme.parse_color(&v))
-                                        {
-                                            s.visuals.widgets.inactive.bg_fill = bg;
-                                            s.visuals.widgets.hovered.bg_fill = bg;
-                                            s.visuals.widgets.active.bg_fill = bg;
-
-                                            // Remove the default gray outline:
-                                            s.visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
-                                            s.visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
-                                            s.visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
-                                        }
-                                        if let Some(r) = self.theme
+                                            .unwrap_or(egui::Color32::TRANSPARENT);
+                                        s.visuals.widgets.inactive.bg_fill = bg;
+                                        s.visuals.widgets.hovered.bg_fill = bg;
+                                        s.visuals.widgets.active.bg_fill = bg;
+                                        s.visuals.widgets.inactive.weak_bg_fill = bg;
+                                        s.visuals.widgets.hovered.weak_bg_fill = bg;
+                                        s.visuals.widgets.active.weak_bg_fill = bg;
+                                        s.visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+                                        s.visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+                                        s.visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+                                        s.visuals.widgets.hovered.expansion = 0.0;
+                                        s.visuals.widgets.active.expansion = 0.0;
+                                        if let Some(r) = self
+                                            .theme
                                             .get_style("app-button", "border-radius")
                                             .and_then(|v| v.trim().replace("px", "").parse::<f32>().ok())
                                         {
@@ -410,18 +473,16 @@ impl EframeWrapper {
                                             s.visuals.widgets.hovered.rounding = rr;
                                             s.visuals.widgets.active.rounding = rr;
                                         }
-                                        if let Some(tc) = self.theme
+                                        if let Some(tc) = self
+                                            .theme
                                             .get_style("app-button", "color")
                                             .and_then(|v| self.theme.parse_color(&v))
                                         {
                                             s.visuals.override_text_color = Some(tc);
                                         }
                                     }, |ui| {
-                                        if ui
-                                            .add(
-                                                egui::Button::new(&app_name)
-                                                    .min_size(egui::Vec2::new(0.0, 15.0)),
-                                            )
+                                        if ui.add(egui::Button::new(&app_name)
+                                            .min_size(egui::Vec2::new(0.0, 15.0)))
                                             .clicked()
                                         {
                                             self.app.launch_app(&app_name);
@@ -444,7 +505,8 @@ impl EframeWrapper {
 
     fn render_power_button(&mut self, ui: &mut egui::Ui) {
         with_alignment(ui, &self.theme, "power-button", |ui| {
-            if let Some(bg) = self.theme
+            if let Some(bg) = self
+                .theme
                 .get_style("power-button", "background-color")
                 .and_then(|s| self.theme.parse_color(&s))
             {
@@ -452,12 +514,16 @@ impl EframeWrapper {
                     st.visuals.widgets.inactive.bg_fill = bg;
                     st.visuals.widgets.hovered.bg_fill = bg;
                     st.visuals.widgets.active.bg_fill = bg;
-                    // Remove outline:
+                    st.visuals.widgets.inactive.weak_bg_fill = bg;
+                    st.visuals.widgets.hovered.weak_bg_fill = bg;
+                    st.visuals.widgets.active.weak_bg_fill = bg;
                     st.visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
                     st.visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
                     st.visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
-
-                    if let Some(tc) = self.theme
+                    st.visuals.widgets.hovered.expansion = 0.0;
+                    st.visuals.widgets.active.expansion = 0.0;
+                    if let Some(tc) = self
+                        .theme
                         .get_style("power-button", "color")
                         .and_then(|s| self.theme.parse_color(&s))
                     {
@@ -491,7 +557,7 @@ impl EframeWrapper {
             "app-list" => self.render_app_list(ui, ctx),
             "time-display" => self.render_time_display(ui),
             "power-button" => self.render_power_button(ui),
-            _ => {},
+            _ => {}
         }
     }
 }
@@ -505,7 +571,8 @@ impl eframe::App for EframeWrapper {
         if self.audio_controller.update_volume().is_ok() {
             self.current_volume = self.audio_controller.get_volume();
         }
-        let bg = self.theme
+        let bg = self
+            .theme
             .get_style("main-window", "background-color")
             .and_then(|s| self.theme.parse_color(&s))
             .unwrap_or(egui::Color32::BLACK);
@@ -514,31 +581,11 @@ impl eframe::App for EframeWrapper {
             .show(ctx, |ui| {
                 self.theme.apply_style(ui, "main-window");
                 let mut secs = vec![
-                    (
-                        "search-bar",
-                        self.theme.get_order("search-bar"),
-                        self.theme.get_layout("search-bar"),
-                    ),
-                    (
-                        "app-list",
-                        self.theme.get_order("app-list"),
-                        self.theme.get_layout("app-list"),
-                    ),
-                    (
-                        "volume-slider",
-                        self.theme.get_order("volume-slider"),
-                        self.theme.get_layout("volume-slider"),
-                    ),
-                    (
-                        "time-display",
-                        self.theme.get_order("time-display"),
-                        self.theme.get_layout("time-display"),
-                    ),
-                    (
-                        "power-button",
-                        self.theme.get_order("power-button"),
-                        self.theme.get_layout("power-button"),
-                    ),
+                    ("search-bar", self.theme.get_order("search-bar"), self.theme.get_layout("search-bar")),
+                    ("app-list", self.theme.get_order("app-list"), self.theme.get_layout("app-list")),
+                    ("volume-slider", self.theme.get_order("volume-slider"), self.theme.get_layout("volume-slider")),
+                    ("time-display", self.theme.get_order("time-display"), self.theme.get_layout("time-display")),
+                    ("power-button", self.theme.get_order("power-button"), self.theme.get_layout("power-button")),
                 ];
                 secs.sort_by_key(|&(_, order, _)| order);
                 let mut i = 0;
@@ -578,17 +625,13 @@ impl eframe::App for EframeWrapper {
                     });
                 });
             if save {
-                self.app
-                    .handle_input(&format!("LAUNCH_OPTIONS:{}:{}", app_name, opts));
+                self.app.handle_input(&format!("LAUNCH_OPTIONS:{}:{}", app_name, opts));
             } else if !cancel {
                 self.editing = Some((app_name, opts));
             }
         }
         let (esc, enter) = ctx.input(|i| {
-            (
-                i.key_pressed(egui::Key::Escape),
-                i.key_pressed(egui::Key::Enter),
-            )
+            (i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Enter))
         });
         match (esc, enter) {
             (true, _) => {
@@ -600,8 +643,7 @@ impl eframe::App for EframeWrapper {
             }
             (_, true) => {
                 if let Some((n, o)) = self.editing.take() {
-                    self.app
-                        .handle_input(&format!("LAUNCH_OPTIONS:{}:{}", n, o));
+                    self.app.handle_input(&format!("LAUNCH_OPTIONS:{}:{}", n, o));
                 } else {
                     self.app.handle_input("ENTER");
                 }
