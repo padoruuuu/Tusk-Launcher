@@ -1,0 +1,100 @@
+/* Centered Streamlined Compact Theme with Absolute Positioning */
+
+/* Main Window */
+.main-window {
+    background-color: #1e1e2e;
+    width: 300px;
+    height: 200px;
+}
+
+/* Search Bar */
+.search-bar {
+    x: 20px;
+    y: 10px;
+    width: 150px;
+    height: 25px;
+    background-color: #3b4252;
+    hover-background-color: #4c566a;
+    border-radius: 6px;
+    text-color: #eceff4;
+    padding: 4px;
+    font-size: 12px;
+}
+
+/* App List */
+.app-list {
+    x: 50px;
+    y: 40px;
+    width: 200px;
+    height: 90px;
+    background-color: #2e3440;
+    padding: 3px;
+}
+
+/* App Item */
+.app-item {
+    width: 100%;
+    hitbox-color: #7aa2f7;
+    hover-background-color: #668ac4;
+    text-color: #eceff4;
+    /*background-color: #3b4252;*/
+    border-radius: 4px;
+    padding: 3px;
+}
+
+/* Time Display */
+.time-display {
+    x: 75px;
+    y: 135px;
+    width: 150px;
+    height: 20px;
+    background-color: #2e3440;
+    text-color: #eceff4;
+    text-align: center;
+}
+
+/* Volume Slider */
+.volume-slider {
+    x: 50px;
+    y: 160px;
+    width: 200px;
+    height: 20px;
+    background-color: #2e3440;
+    hover-background-color: #434c5e;
+    text-color: #eceff4;
+    border-radius: 4px;
+}
+
+/* Power Controls */
+.power-button {
+    x: 50px;
+    y: 185px;
+    width: 65px;
+    height: 15px;
+    background-color: #7aa2f7;
+    hover-background-color: #668ac4;
+    text-color: #eceff4;
+    border-radius: 4px;
+}
+
+.restart-button {
+    x: 117px;
+    y: 185px;
+    width: 65px;
+    height: 15px;
+    background-color: #7aa2f7;
+    hover-background-color: #668ac4;
+    text-color: #eceff4;
+    border-radius: 4px;
+}
+
+.logout-button {
+    x: 184px;
+    y: 185px;
+    width: 65px;
+    height: 15px;
+    background-color: #7aa2f7;
+    hover-background-color: #668ac4;
+    text-color: #eceff4;
+    border-radius: 4px;
+}
