@@ -1,8 +1,9 @@
-/* Centered Streamlined Compact Theme with Absolute Positioning */
+/*reference css file*/
+
 
 /* Main Window */
 .main-window {
-    background-color: #1e1e2e;
+    background-color: #000000;
     width: 300px;
     height: 200px;
 }
@@ -25,8 +26,8 @@
 .app-list {
     x: 50px;
     y: 40px;
-    width: 200px;
-    height: 90px;
+    width: 400px;
+    height: 200px;
     background-color: #2e3440;
     padding: 3px;
 }
@@ -45,7 +46,7 @@
 /* Time Display */
 .time-display {
     x: 75px;
-    y: 135px;
+    y: 165px;
     width: 150px;
     height: 20px;
     background-color: #2e3440;
@@ -97,4 +98,24 @@
     hover-background-color: #668ac4;
     text-color: #eceff4;
     border-radius: 4px;
+}
+
+/* Environment Variable Input Window */
+.env-input {
+    background-color: #3b4252;
+    text-color: #eceff4;
+    padding: 6px;
+    font-size: 12px;
+    border-radius: 4px;
+    width: 65px;
+    height: 15px;
+}
+
+/* Edit Button */
+.edit-button {
+    background-color: #7aa2f7;
+    hover-background-color: #668ac4;
+    text-color: #eceff4;
+    border-radius: 4px;
+    padding: 3px;
 }
