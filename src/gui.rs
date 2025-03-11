@@ -322,6 +322,7 @@ impl EframeWrapper {
     }
 
     fn render_volume_slider(&mut self, ui: &mut egui::Ui) {
+        // This method is only called if audio control is enabled.
         with_alignment(ui, &self.theme, "volume-slider", |ui| {
             self.theme.apply_style(ui, "volume-slider");
             ui.horizontal(|ui| {
@@ -401,17 +402,34 @@ impl EframeWrapper {
                                     if let Some(tex) = self.app.get_icon_path(&app_name)
                                         .and_then(|p| self.icon_manager.get_texture(ctx, &p)) {
                                         ui.painter().image(
-                                            tex.id(), 
-                                            icon_rect, 
-                                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)), 
-                                            egui::Color32::WHITE
+                                            tex.id(),
+                                            icon_rect,
+                                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
+                                            egui::Color32::WHITE,
                                         );
                                     }
                                     let gear = "⚙";
+                                    let gear_color = if icon_resp.hovered() {
+                                        self.theme.get_style("settings-button", "hover-color")
+                                            .and_then(|s| self.theme.parse_color(&s))
+                                            .unwrap_or(egui::Color32::from_rgb(64, 64, 64))
+                                    } else {
+                                        self.theme.get_style("settings-button", "text-color")
+                                            .and_then(|s| self.theme.parse_color(&s))
+                                            .unwrap_or(egui::Color32::from_rgb(64, 64, 64))
+                                    };
+                                    if let Some(hitbox_color) = self.theme.get_style("settings-button", "hitbox-color")
+                                        .and_then(|s| self.theme.parse_color(&s)) {
+                                        ui.painter().rect_filled(icon_rect, 0.0, hitbox_color);
+                                    }
                                     let gear_font = egui::TextStyle::Button.resolve(ui.style());
-                                    let gear_size = ui.fonts(|f| f.layout_no_wrap(gear.to_owned(), gear_font.clone(), egui::Color32::WHITE).size());
-                                    let gear_pos = egui::Pos2::new(icon_rect.max.x - gear_size.x, icon_rect.min.y - gear_size.y * 0.2);
-                                    ui.painter().text(gear_pos, egui::Align2::RIGHT_TOP, gear, gear_font, egui::Color32::from_rgb(64, 64, 64));
+                                    let center_align = egui::Align2([egui::Align::Center, egui::Align::Center]);
+                                    let gear_size = ui.fonts(|f| f.layout_no_wrap(gear.to_owned(), gear_font.clone(), gear_color).size());
+                                    let gear_pos = egui::Pos2::new(
+                                        icon_rect.center().x - gear_size.x / 2.0,
+                                        icon_rect.center().y - gear_size.y / 2.0
+                                    );
+                                    ui.painter().text(gear_pos, center_align, gear, gear_font, gear_color);
                                 }
                                 if settings_clicked {
                                     let opts = if self.app.get_launch_options(&app_name).is_some() {
@@ -530,8 +548,12 @@ impl EframeWrapper {
 impl eframe::App for EframeWrapper {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.app.update();
-        if self.audio_controller.update_volume().is_ok() {
-            self.current_volume = self.audio_controller.get_volume();
+        // Clone the configuration to avoid borrow conflicts inside closures.
+        let cfg = self.app.get_config().clone();
+        if cfg.enable_audio_control {
+            if self.audio_controller.update_volume().is_ok() {
+                self.current_volume = self.audio_controller.get_volume();
+            }
         }
         let bg = self.theme.get_style("env-window", "background-color")
             .or_else(|| self.theme.get_style("main-window", "background-color"))
@@ -541,13 +563,17 @@ impl eframe::App for EframeWrapper {
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(bg))
             .show(ctx, |ui| {
-                let mut secs = vec![
-                    "search-bar",
-                    "app-list",
-                    "volume-slider",
-                    "time-display",
-                    "power-button",
-                ];
+                // Build list of sections based on config flags.
+                let mut secs = vec!["search-bar", "app-list"];
+                if cfg.enable_audio_control {
+                    secs.push("volume-slider");
+                }
+                if cfg.show_time {
+                    secs.push("time-display");
+                }
+                if cfg.enable_power_options {
+                    secs.push("power-button");
+                }
                 secs.sort_by_key(|sec| self.theme.get_order(sec));
                 let parse_px = |s: Option<String>| -> Option<f32> {
                     s.and_then(|val| val.trim_end_matches("px").parse::<f32>().ok())
@@ -578,51 +604,88 @@ impl eframe::App for EframeWrapper {
                 }
             });
 
+        // --- Modified Env Variables Window with Drag Enabled --- //
         if let Some((app_name, mut opts)) = self.editing.take() {
             let (mut save, mut cancel) = (false, false);
-            let env_input_bg = self.theme.get_style("env-input", "background-color")
+            let env_bg = self.theme.get_style("env-window", "background-color")
                 .and_then(|s| self.theme.parse_color(&s))
                 .unwrap_or(egui::Color32::DARK_GRAY);
-            egui::Window::new(format!("Editing For {}", app_name))
-                .collapsible(false)
-                .frame(egui::Frame::none().fill(env_input_bg))
+            let width = self.theme.get_style("env-window", "width")
+                .and_then(|s| s.trim_end_matches("px").parse::<f32>().ok())
+                .unwrap_or(300.0);
+            let height = self.theme.get_style("env-window", "height")
+                .and_then(|s| s.trim_end_matches("px").parse::<f32>().ok())
+                .unwrap_or(200.0);
+            let x = self.theme.get_style("env-window", "x")
+                .and_then(|s| s.trim_end_matches("px").parse::<f32>().ok())
+                .unwrap_or((ctx.input(|i| i.screen_rect().width()) - width) / 2.0);
+            let y = self.theme.get_style("env-window", "y")
+                .and_then(|s| s.trim_end_matches("px").parse::<f32>().ok())
+                .unwrap_or((ctx.input(|i| i.screen_rect().height()) - height) / 2.0);
+            egui::Area::new("env-window".into())
+                .order(egui::Order::Foreground)
+                .movable(true)
+                .fixed_pos(egui::Pos2::new(x, y))
                 .show(ctx, |ui| {
-                    self.theme.apply_style(ui, "env-input");
-                    ui.label("Environment Variables:");
-                    ui.text_edit_singleline(&mut opts);
-                    ui.horizontal(|ui| {
-                        with_custom_style(ui, |s| {
-                            if let Some(bg) = self.theme.get_style("edit-button", "background-color")
-                                .and_then(|s| self.theme.parse_color(&s)) {
-                                s.visuals.widgets.inactive.bg_fill = bg;
-                                if let Some(hover_bg) = self.theme.get_style("edit-button", "hover-background-color")
+                    ui.set_width(width);
+                    ui.set_height(height);
+                    egui::Frame::none().fill(env_bg).show(ui, |ui| {
+                        ui.heading(format!("Editing For {}", app_name));
+                        let env_input_bg = self.theme.get_style("env-input", "background-color")
+                            .and_then(|s| self.theme.parse_color(&s))
+                            .unwrap_or(egui::Color32::DARK_GRAY);
+                        egui::Frame::none().fill(env_input_bg).show(ui, |ui| {
+                            with_alignment(ui, &self.theme, "env-input", |ui| {
+                                self.theme.apply_style(ui, "env-input");
+                                ui.label("Environment Variables:");
+                                with_custom_style(ui, |s| {
+                                    if let Some(c) = self.theme.get_style("env-input", "text-color")
+                                        .and_then(|s| self.theme.parse_color(&s)) {
+                                        s.visuals.override_text_color = Some(c);
+                                    }
+                                }, |ui| {
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut opts)
+                                            .hint_text("Enter env variables...")
+                                            .frame(false)
+                                    );
+                                });
+                            });
+                        });
+                        ui.horizontal(|ui| {
+                            with_custom_style(ui, |s| {
+                                if let Some(bg) = self.theme.get_style("edit-button", "background-color")
                                     .and_then(|s| self.theme.parse_color(&s)) {
-                                    s.visuals.widgets.hovered.bg_fill = hover_bg;
-                                    s.visuals.widgets.hovered.weak_bg_fill = hover_bg;
-                                } else {
-                                    s.visuals.widgets.hovered.bg_fill = bg;
-                                    s.visuals.widgets.hovered.weak_bg_fill = bg;
+                                    s.visuals.widgets.inactive.bg_fill = bg;
+                                    if let Some(hover_bg) = self.theme.get_style("edit-button", "hover-background-color")
+                                        .and_then(|s| self.theme.parse_color(&s)) {
+                                        s.visuals.widgets.hovered.bg_fill = hover_bg;
+                                        s.visuals.widgets.hovered.weak_bg_fill = hover_bg;
+                                    } else {
+                                        s.visuals.widgets.hovered.bg_fill = bg;
+                                        s.visuals.widgets.hovered.weak_bg_fill = bg;
+                                    }
+                                    s.visuals.widgets.active.bg_fill = bg;
+                                    s.visuals.widgets.inactive.weak_bg_fill = bg;
+                                    s.visuals.widgets.active.weak_bg_fill = bg;
+                                    s.visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+                                    s.visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+                                    s.visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+                                    s.visuals.widgets.hovered.expansion = 0.0;
+                                    s.visuals.widgets.active.expansion = 0.0;
                                 }
-                                s.visuals.widgets.active.bg_fill = bg;
-                                s.visuals.widgets.inactive.weak_bg_fill = bg;
-                                s.visuals.widgets.active.weak_bg_fill = bg;
-                                s.visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
-                                s.visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
-                                s.visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
-                                s.visuals.widgets.hovered.expansion = 0.0;
-                                s.visuals.widgets.active.expansion = 0.0;
-                            }
-                            if let Some(tc) = self.theme.get_style("edit-button", "text-color")
-                                .and_then(|s| self.theme.parse_color(&s)) {
-                                s.visuals.override_text_color = Some(tc);
-                            }
-                        }, |ui| {
-                            if ui.button("Save").clicked() {
-                                save = true;
-                            }
-                            if ui.button("Cancel").clicked() {
-                                cancel = true;
-                            }
+                                if let Some(tc) = self.theme.get_style("edit-button", "text-color")
+                                    .and_then(|s| self.theme.parse_color(&s)) {
+                                    s.visuals.override_text_color = Some(tc);
+                                }
+                            }, |ui| {
+                                if ui.button("Save").clicked() {
+                                    save = true;
+                                }
+                                if ui.button("Cancel").clicked() {
+                                    cancel = true;
+                                }
+                            });
                         });
                     });
                 });
@@ -632,6 +695,7 @@ impl eframe::App for EframeWrapper {
                 self.editing = Some((app_name, opts));
             }
         }
+        // ---------------------------------- //
 
         let (esc, enter) = ctx.input(|i| (i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Enter)));
         match (esc, enter) {
