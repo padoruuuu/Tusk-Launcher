@@ -87,18 +87,43 @@ fn launch_app(
         update_recent_apps(app_name, true)?;
     }
     let home_dir = std::env::var("HOME").map(PathBuf::from).map_err(|_| "No home directory")?;
+    
     let (cmd, dir) = if let Some(opts) = options {
+        let command = match &opts.custom_command {
+            Some(custom_cmd) if custom_cmd.contains("%command%") => {
+                // Replace %command% with the original exec_cmd at launch time
+                custom_cmd.replace("%command%", exec_cmd)
+            },
+            Some(custom_cmd) => {
+                // No %command% placeholder, use as a prefix to the original command
+                format!("{} {}", custom_cmd, exec_cmd)
+            },
+            None => {
+                // No custom command defined, use original
+                exec_cmd.to_string()
+            }
+        };
+        
         (
-            opts.custom_command.as_deref().unwrap_or(exec_cmd),
+            command,
             opts.working_directory.as_deref().unwrap_or_else(|| home_dir.to_str().unwrap_or("")),
         )
     } else {
-        (exec_cmd, home_dir.to_str().unwrap_or(""))
+        (exec_cmd.to_string(), home_dir.to_str().unwrap_or(""))
     };
-    Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(dir)
+    
+    // Create a command that includes environment variables if present
+    let mut command = Command::new("sh");
+    command.arg("-c").arg(&cmd).current_dir(dir);
+    
+    // Add environment variables if specified
+    if let Some(opts) = options {
+        for (key, value) in &opts.environment_vars {
+            command.env(key, value);
+        }
+    }
+    
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -159,7 +184,8 @@ impl AppInterface for AppLauncher {
                 let parts: Vec<&str> = s.split(':').collect();
                 if parts.len() >= 3 {
                     let (app_name, opts_str) = (parts[1], parts[2]);
-                    let opts = parse_launch_options_input(opts_str);
+                    let orig_cmd = self.get_app_command(app_name);
+                    let opts = parse_launch_options_input(opts_str, orig_cmd);
                     self.launch_options.insert(app_name.to_string(), opts.clone());
                     let _ = update_launch_options(app_name, opts);
                     self.query.clear();
@@ -261,11 +287,20 @@ impl AppLauncher {
             result
         }).unwrap_or_default()
     }
+
+    fn get_app_command(&self, app_name: &str) -> Option<String> {
+        self.applications
+            .iter()
+            .find(|(name, _, _)| name == app_name)
+            .map(|(_, cmd, _)| cmd.clone())
+    }
 }
 
-fn parse_launch_options_input(input: &str) -> AppLaunchOptions {
+fn parse_launch_options_input(input: &str, _original_command: Option<String>) -> AppLaunchOptions {
     let mut parts = input.split_whitespace().peekable();
     let mut options = AppLaunchOptions::default();
+    let mut command_parts = Vec::new();
+    
     while let Some(part) = parts.next() {
         match part {
             "-e" => {
@@ -281,14 +316,25 @@ fn parse_launch_options_input(input: &str) -> AppLaunchOptions {
                 }
             }
             _ => {
-                let cmd = std::iter::once(part.to_string())
-                    .chain(parts.map(|s| s.to_string()))
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                options.custom_command = Some(cmd);
+                // If we encounter something that's not a flag, we're starting the command part
+                command_parts.push(part.to_string());
+                command_parts.extend(parts.map(|s| s.to_string()));
                 break;
             }
         }
     }
+
+    // Join command parts with spaces
+    let input_command = if !command_parts.is_empty() {
+        command_parts.join(" ")
+    } else {
+        String::new()
+    };
+
+    // Set the custom command only if user provided one
+    if !input_command.is_empty() {
+        options.custom_command = Some(input_command);
+    }
+
     options
 }
