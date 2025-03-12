@@ -1,5 +1,4 @@
-/*reference css file*/
-
+/* Centered Streamlined Compact Theme with Absolute Positioning */
 
 /* Main Window */
 .main-window {
@@ -10,7 +9,7 @@
 
 /* Search Bar */
 .search-bar {
-    x: 20px;
+    x: 60px;
     y: 10px;
     width: 150px;
     height: 25px;
@@ -24,7 +23,7 @@
 
 /* App List */
 .app-list {
-    x: 50px;
+    x: 62px;
     y: 40px;
     width: 400px;
     height: 200px;
@@ -35,7 +34,7 @@
 /* App Item */
 .app-item {
     width: 100%;
-    hitbox-color: #7aa2f7;
+    background-color: #7aa2f7;
     hover-background-color: #668ac4;
     text-color: #eceff4;
     /*background-color: #3b4252;*/
@@ -45,10 +44,10 @@
 
 /* Time Display */
 .time-display {
-    x: 75px;
-    y: 165px;
-    width: 150px;
-    height: 20px;
+    x: 72px;
+    y: 145px;
+    width: 200px;
+    height: 50px;
     background-color: #2e3440;
     text-color: #eceff4;
     text-align: center;
@@ -68,8 +67,8 @@
 
 /* Power Controls */
 .power-button {
-    x: 50px;
-    y: 185px;
+    x: 60px;
+    y: 165px;
     width: 65px;
     height: 15px;
     background-color: #7aa2f7;
@@ -79,8 +78,8 @@
 }
 
 .restart-button {
-    x: 117px;
-    y: 185px;
+    x: 127px;
+    y: 165px;
     width: 65px;
     height: 15px;
     background-color: #7aa2f7;
@@ -90,8 +89,8 @@
 }
 
 .logout-button {
-    x: 184px;
-    y: 185px;
+    x: 194px;
+    y: 16       5px;
     width: 65px;
     height: 15px;
     background-color: #7aa2f7;
@@ -107,8 +106,8 @@
     padding: 6px;
     font-size: 12px;
     border-radius: 4px;
-    width: 65px;
-    height: 15px;
+    width: 300px;
+    height: 50px;
 }
 
 /* Edit Button */
