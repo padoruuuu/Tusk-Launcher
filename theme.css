@@ -2,7 +2,7 @@
 
 /* Main Window */
 .main-window {
-    background-color: #000000;
+    background-color: rgba(0, 0, 0, 0.9);
     width: 300px;
     height: 200px;
 }
@@ -13,10 +13,10 @@
     y: 10px;
     width: 150px;
     height: 25px;
-    background-color: #3b4252;
-    hover-background-color: #4c566a;
+    background-color: rgba(59, 66, 82, 1);
+    hover-background-color: rgba(76, 86, 106, 1);
     border-radius: 6px;
-    text-color: #eceff4;
+    text-color: rgba(236, 239, 244, 1);
     padding: 4px;
     font-size: 12px;
 }
@@ -27,17 +27,17 @@
     y: 40px;
     width: 400px;
     height: 200px;
-    background-color: #2e3440;
+    background-color: rgba(46, 52, 64, 1);
     padding: 3px;
 }
 
 /* App Item */
 .app-item {
     width: 100%;
-    background-color: #7aa2f7;
-    hover-background-color: #668ac4;
-    text-color: #eceff4;
-    /*background-color: #3b4252;*/
+    background-color: rgba(122, 162, 247, 1);
+    hover-background-color: rgba(102, 138, 196, 1);
+    text-color: rgba(236, 239, 244, 1);
+    /*background-color: rgba(59, 66, 82, 1);*/
     border-radius: 4px;
     padding: 3px;
 }
@@ -48,8 +48,8 @@
     y: 145px;
     width: 200px;
     height: 50px;
-    background-color: #2e3440;
-    text-color: #eceff4;
+    background-color: rgba(46, 52, 64, 1);
+    text-color: rgba(236, 239, 244, 1);
     text-align: center;
 }
 
@@ -59,9 +59,9 @@
     y: 160px;
     width: 200px;
     height: 20px;
-    background-color: #2e3440;
-    hover-background-color: #434c5e;
-    text-color: #eceff4;
+    background-color: rgba(46, 52, 64, 1);
+    hover-background-color: rgba(67, 76, 94, 1);
+    text-color: rgba(236, 239, 244, 1);
     border-radius: 4px;
 }
 
@@ -71,9 +71,9 @@
     y: 165px;
     width: 65px;
     height: 15px;
-    background-color: #7aa2f7;
-    hover-background-color: #668ac4;
-    text-color: #eceff4;
+    background-color: rgba(122, 162, 247, 1);
+    hover-background-color: rgba(102, 138, 196, 1);
+    text-color: rgba(236, 239, 244, 1);
     border-radius: 4px;
 }
 
@@ -82,27 +82,27 @@
     y: 165px;
     width: 65px;
     height: 15px;
-    background-color: #7aa2f7;
-    hover-background-color: #668ac4;
-    text-color: #eceff4;
+    background-color: rgba(122, 162, 247, 1);
+    hover-background-color: rgba(102, 138, 196, 1);
+    text-color: rgba(236, 239, 244, 1);
     border-radius: 4px;
 }
 
 .logout-button {
     x: 194px;
-    y: 16       5px;
+    y: 165px;
     width: 65px;
     height: 15px;
-    background-color: #7aa2f7;
-    hover-background-color: #668ac4;
-    text-color: #eceff4;
+    background-color: rgba(122, 162, 247, 1);
+    hover-background-color: rgba(102, 138, 196, 1);
+    text-color: rgba(236, 239, 244, 1);
     border-radius: 4px;
 }
 
 /* Environment Variable Input Window */
 .env-input {
-    background-color: #3b4252;
-    text-color: #eceff4;
+    background-color: rgba(59, 66, 82, 1);
+    text-color: rgba(236, 239, 244, 1);
     padding: 6px;
     font-size: 12px;
     border-radius: 4px;
@@ -112,9 +112,9 @@
 
 /* Edit Button */
 .edit-button {
-    background-color: #7aa2f7;
-    hover-background-color: #668ac4;
-    text-color: #eceff4;
+    background-color: rgba(122, 162, 247, 1);
+    hover-background-color: rgba(102, 138, 196, 1);
+    text-color: rgba(236, 239, 244, 1);
     border-radius: 4px;
     padding: 3px;
 }
