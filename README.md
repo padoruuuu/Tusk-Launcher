@@ -12,3 +12,10 @@ Alternatively use the provided pkgbuild.
 ![image](https://github.com/user-attachments/assets/fabde7e0-f106-4b26-82a9-3232648ca5ca)
 
 
+
+
+Future plans:
+tray icon support: waiting on this https://gitlab.freedesktop.org/wayland/wayland-protocols/-/merge_requests/355
+setting images as backgrounds of the app. 
+merging config.toml and theme.css into 1 file. 
+allowing adding custom buttons that point to external applications in the css theme that would be displayed in the main window.
