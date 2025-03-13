@@ -132,7 +132,7 @@ impl Theme {
         }
         if let Some(pad) = self.get_style(class, "padding").and_then(|s| s.replace("px", "").parse::<f32>().ok()) {
             style.spacing.item_spacing = egui::Vec2::splat(pad);
-            style.spacing.window_margin = egui::Margin::same(pad);
+            style.spacing.window_margin = egui::Margin::symmetric(pad, pad);
         }
         if let Some(rad) = self.get_style(class, "border-radius").and_then(|s| s.replace("px", "").parse::<f32>().ok()) {
             let r = egui::Rounding::same(rad);
@@ -179,9 +179,9 @@ impl Theme {
             style.visuals.widgets.active.bg_fill = bg;
             style.visuals.widgets.inactive.weak_bg_fill = bg;
             style.visuals.widgets.active.weak_bg_fill = bg;
-            style.visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
-            style.visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
-            style.visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+            style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
+            style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
+            style.visuals.widgets.active.bg_stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
             style.visuals.widgets.hovered.expansion = 0.0;
             style.visuals.widgets.active.expansion = 0.0;
         }
@@ -205,9 +205,9 @@ impl Theme {
         style.visuals.widgets.active.bg_fill = base;
         style.visuals.widgets.inactive.weak_bg_fill = base;
         style.visuals.widgets.active.weak_bg_fill = base;
-        style.visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
-        style.visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
-        style.visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+        style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
+        style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
+        style.visuals.widgets.active.bg_stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
         style.visuals.widgets.hovered.expansion = 0.0;
         style.visuals.widgets.active.expansion = 0.0;
         if let Some(tc) = self.get_combined_style(classes, "text-color").and_then(|s| self.parse_color(&s)) {
@@ -370,9 +370,9 @@ impl EframeWrapper {
                     s.visuals.widgets.hovered.bg_fill = hover.unwrap_or(base);
                     s.visuals.widgets.hovered.weak_bg_fill = hover.unwrap_or(base);
                     s.visuals.widgets.active = slider_visuals.clone();
-                    s.visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
-                    s.visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
-                    s.visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+                    s.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
+                    s.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
+                    s.visuals.widgets.active.bg_stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
                     s.visuals.widgets.hovered.expansion = 0.0;
                     s.visuals.widgets.active.expansion = 0.0;
                 }, |ui| {
@@ -462,7 +462,6 @@ impl EframeWrapper {
         });
     }
 
-    // The entire power-button area is wrapped with one custom style call so the hover-background-color applies.
     fn render_power_button(&mut self, ui: &mut egui::Ui) {
         with_alignment(ui, &self.theme, "power-button", |ui| {
             with_custom_style(ui, |s| {
@@ -534,9 +533,6 @@ impl eframe::App for EframeWrapper {
             });
         if let Some((app_name, mut opts)) = self.editing.take() {
             let (mut save, mut cancel) = (false, false);
-            let env_bg = self.theme.get_style("env-window", "background-color")
-                .and_then(|s| self.theme.parse_color(&s))
-                .unwrap_or(egui::Color32::DARK_GRAY);
             let width = self.theme.get_px_value("env-window", "width").unwrap_or(300.0);
             let height = self.theme.get_px_value("env-window", "height").unwrap_or(200.0);
             let x = self.theme.get_px_value("env-window", "x")
@@ -550,34 +546,39 @@ impl eframe::App for EframeWrapper {
                 .show(ctx, |ui| {
                     ui.set_width(width);
                     ui.set_height(height);
-                    egui::Frame::none().fill(env_bg).show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        // Header drag-handle: allocate a 20px tall region with click_and_drag sense.
+                        let header_height = 20.0;
+                        let (header_rect, _header_resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), header_height), egui::Sense::click_and_drag());
+                        ui.painter().text(
+                            header_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            format!("Environment Variables for {}", app_name),
+                            ui.style().text_styles.get(&egui::TextStyle::Body).cloned().unwrap_or_else(|| egui::FontId::default()),
+                            ui.visuals().override_text_color.unwrap_or(egui::Color32::WHITE),
+                        );
+                        ui.add_space(4.0);
+                        // env-input area: apply background from CSS for "env-input"
                         let env_input_bg = self.theme.get_style("env-input", "background-color")
                             .and_then(|s| self.theme.parse_color(&s))
-                            .unwrap_or(egui::Color32::DARK_GRAY);
-                        egui::Frame::none().fill(env_input_bg).show(ui, |ui| {
-                            // Apply width/height if specified in env-input CSS
-                            if let (Some(w), Some(h)) = (self.theme.get_px_value("env-input", "width"), self.theme.get_px_value("env-input", "height")) {
-                                ui.set_width(w);
-                                ui.set_height(h);
-                            }
-                            with_alignment(ui, &self.theme, "env-input", |ui| {
-                                self.theme.apply_style(ui, "env-input");
-                                // Merge the editing info with the label
-                                ui.label(format!("Environment Variables for {}", app_name));
-                                with_custom_style(ui, |s| {
-                                    if let Some(c) = self.theme.get_style("env-input", "text-color")
-                                        .and_then(|s| self.theme.parse_color(&s)) {
-                                        s.visuals.override_text_color = Some(c);
-                                    }
-                                }, |ui| {
-                                    ui.add(
-                                        egui::TextEdit::singleline(&mut opts)
-                                            .hint_text("Enter env variables...")
-                                            .frame(false)
+                            .unwrap_or(egui::Color32::TRANSPARENT);
+                        egui::Frame::none()
+                            .fill(env_input_bg)
+                            .show(ui, |ui| {
+                                if let (Some(w), Some(h)) = (self.theme.get_px_value("env-input", "width"), self.theme.get_px_value("env-input", "height")) {
+                                    ui.set_width(w);
+                                    ui.set_height(h);
+                                }
+                                with_alignment(ui, &self.theme, "env-input", |ui| {
+                                    self.theme.apply_style(ui, "env-input");
+                                    ui.add(egui::TextEdit::singleline(&mut opts)
+                                        .hint_text("Enter env variables...")
+                                        .frame(false)
                                     );
                                 });
                             });
-                        });
+                        ui.add_space(4.0);
+                        // Save and Cancel buttons with themed styling
                         ui.horizontal(|ui| {
                             with_custom_style(ui, |s| { self.theme.apply_widget_style(s, "edit-button"); }, |ui| {
                                 if ui.button("Save").clicked() { save = true; }
