@@ -6,7 +6,7 @@ use std::{
     process,
 };
 use eframe;
-use egui::style::WidgetVisuals; // Bring in WidgetVisuals for widget styling.
+use egui::style::WidgetVisuals; // For widget styling.
 use crate::{config::Config, app_launcher::AppLaunchOptions, audio::AudioController, cache::IconManager};
 use xdg;
 
@@ -125,7 +125,7 @@ impl Theme {
 
     fn apply_style(&self, ui: &mut egui::Ui, class: &str) {
         let style = ui.style_mut();
-        // Use panel_fill since window_fill is removed.
+        // Use panel_fill since window_fill was removed.
         if let Some(bg) = self.get_style(class, "background-color").and_then(|s| self.parse_color(&s)) {
             style.visuals.panel_fill = bg;
         }
@@ -180,8 +180,8 @@ impl Theme {
         (base, hover, rounding)
     }
 
-    // Get the app-list size as configured.
-    fn get_app_list_size(&self, ui: &egui::Ui) -> (f32, f32) {
+    // Now get_app_list_size takes no UI parameter.
+    fn get_app_list_size(&self) -> (f32, f32) {
         let w = self.get_px_value("app-list", "width").unwrap_or(300.0);
         let h = self.get_px_value("app-list", "height").unwrap_or(200.0);
         (w, h)
@@ -422,7 +422,7 @@ impl EframeWrapper {
 
     fn render_app_list(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.theme.apply_style(ui, "app-list");
-        let (w, h) = self.theme.get_app_list_size(ui);
+        let (w, h) = self.theme.get_app_list_size();
         ui.vertical(|ui| {
             for app_name in self.app.get_search_results() {
                 ui.horizontal(|ui| {
@@ -549,7 +549,7 @@ impl eframe::App for EframeWrapper {
                     if sec == "app-list" {
                         let x = self.theme.get_px_value("app-list", "x").unwrap_or(0.0);
                         let y = self.theme.get_px_value("app-list", "y").unwrap_or(0.0);
-                        let (w, h) = self.theme.get_app_list_size(ui);
+                        let (w, h) = self.theme.get_app_list_size();
                         egui::Area::new("app-list".to_owned().into())
                             .order(egui::Order::Foreground)
                             .anchor(egui::Align2::LEFT_TOP, egui::vec2(x, y))
@@ -578,26 +578,69 @@ impl eframe::App for EframeWrapper {
                 }
             });
 
-        // Handle env-window key events:
-        let esc_pressed = ctx.input(|i| i.key_pressed(egui::Key::Escape));
-        let enter_pressed = ctx.input(|i| i.key_pressed(egui::Key::Enter));
-        if esc_pressed {
-            if self.editing.is_some() {
-                // Close the env-input window without exiting the app.
+        // If the env-input window is open, display it.
+        if let Some((ref mut app_name, ref mut opts)) = self.editing {
+            let width = self.theme.get_px_value("env-window", "width").unwrap_or(300.0);
+            let height = self.theme.get_px_value("env-window", "height").unwrap_or(200.0);
+            let x = self.theme.get_px_value("env-window", "x")
+                .unwrap_or((ctx.input(|i| i.screen_rect().width()) - width) / 2.0);
+            let y = self.theme.get_px_value("env-window", "y")
+                .unwrap_or((ctx.input(|i| i.screen_rect().height()) - height) / 2.0);
+            let env_input_bg = self.theme.get_style("env-input", "background-color")
+                .and_then(|s| self.theme.parse_color(&s))
+                .unwrap_or(egui::Color32::TRANSPARENT);
+            let mut save = false;
+            let mut cancel = false;
+            egui::Area::new("env-window".into())
+                .order(egui::Order::Foreground)
+                .movable(true)
+                .default_pos(egui::pos2(x, y))
+                .show(ctx, |ui| {
+                    ui.set_width(width);
+                    ui.set_height(height);
+                    egui::Frame::NONE.fill(env_input_bg).show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            ui.label(format!("Environment Variables for {}", app_name));
+                            ui.add_space(4.0);
+                            with_alignment(ui, &self.theme, "env-input", |ui| {
+                                self.theme.apply_style(ui, "env-input");
+                                ui.add(egui::TextEdit::singleline(opts)
+                                    .hint_text("Enter env variables...")
+                                    .frame(false)
+                                );
+                            });
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                with_custom_style(ui, |s| { self.theme.apply_widget_style(s, "edit-button"); }, |ui| {
+                                    if ui.button("Save").clicked() { save = true; }
+                                    if ui.button("Cancel").clicked() { cancel = true; }
+                                });
+                            });
+                        });
+                    });
+                });
+            if save {
+                let result = format!("LAUNCH_OPTIONS:{}:{}", app_name, opts);
+                self.app.handle_input(&result);
                 self.editing = None;
-            } else {
-                self.app.handle_input("ESC");
-            }
-        }
-        if enter_pressed {
-            if let Some((n, o)) = self.editing.take() {
-                self.app.handle_input(&format!("LAUNCH_OPTIONS:{}:{}", n, o));
-            } else {
-                self.app.handle_input("ENTER");
+            } else if cancel {
+                self.editing = None;
             }
         }
 
-        // Only exit the entire application if the main app signals it.
+        // Handle Esc/Enter keys.
+        let esc_pressed = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        let enter_pressed = ctx.input(|i| i.key_pressed(egui::Key::Enter));
+        if esc_pressed && self.editing.is_some() {
+            // If env-input window is open, close it.
+            self.editing = None;
+        } else if esc_pressed {
+            self.app.handle_input("ESC");
+        }
+        if enter_pressed && self.editing.is_none() {
+            self.app.handle_input("ENTER");
+        }
+
         if self.app.should_quit() {
             process::exit(0);
         }
