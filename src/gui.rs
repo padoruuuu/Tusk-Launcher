@@ -3,8 +3,10 @@ use std::{
     error::Error,
     fs::{read_to_string, create_dir_all, OpenOptions},
     io::Write,
+    process,
 };
 use eframe;
+use egui::style::WidgetVisuals; // Bring in WidgetVisuals for widget styling.
 use crate::{config::Config, app_launcher::AppLaunchOptions, audio::AudioController, cache::IconManager};
 use xdg;
 
@@ -123,33 +125,49 @@ impl Theme {
 
     fn apply_style(&self, ui: &mut egui::Ui, class: &str) {
         let style = ui.style_mut();
+        // Use panel_fill since window_fill is removed.
         if let Some(bg) = self.get_style(class, "background-color").and_then(|s| self.parse_color(&s)) {
-            style.visuals.window_fill = bg;
             style.visuals.panel_fill = bg;
         }
         if let Some(col) = self.get_style(class, "text-color").and_then(|s| self.parse_color(&s)) {
             style.visuals.override_text_color = Some(col);
         }
-        if let Some(pad) = self.get_style(class, "padding").and_then(|s| s.replace("px", "").parse::<f32>().ok()) {
-            style.spacing.item_spacing = egui::Vec2::splat(pad);
-            style.spacing.window_margin = egui::Margin::symmetric(pad, pad);
+        if let Some(pad) = self.get_style(class, "padding")
+            .and_then(|s| s.replace("px", "").parse::<f32>().ok()) {
+            style.spacing.item_spacing = egui::vec2(pad, pad);
+            style.spacing.window_margin = egui::Margin::symmetric(pad as i8, pad as i8);
         }
-        if let Some(rad) = self.get_style(class, "border-radius").and_then(|s| s.replace("px", "").parse::<f32>().ok()) {
-            let r = egui::Rounding::same(rad);
-            style.visuals.window_rounding = r;
-            style.visuals.widgets.noninteractive.rounding = r;
-            style.visuals.widgets.inactive.rounding = r;
-            style.visuals.widgets.hovered.rounding = r;
-            style.visuals.widgets.active.rounding = r;
+        if let Some(rad) = self.get_style(class, "border-radius")
+            .and_then(|s| s.replace("px", "").parse::<f32>().ok()) {
+            let r = egui::CornerRadius::same(rad as u8);
+            style.visuals.widgets.noninteractive = WidgetVisuals {
+                corner_radius: r,
+                ..style.visuals.widgets.noninteractive
+            };
+            style.visuals.widgets.inactive = WidgetVisuals {
+                corner_radius: r,
+                ..style.visuals.widgets.inactive
+            };
+            style.visuals.widgets.hovered = WidgetVisuals {
+                corner_radius: r,
+                ..style.visuals.widgets.hovered
+            };
+            style.visuals.widgets.active = WidgetVisuals {
+                corner_radius: r,
+                ..style.visuals.widgets.active
+            };
         }
-        if let Some(sz) = self.get_style(class, "font-size").and_then(|s| s.replace("px", "").parse::<f32>().ok()) {
+        if let Some(sz) = self.get_style(class, "font-size")
+            .and_then(|s| s.replace("px", "").parse::<f32>().ok()) {
             if let Some(text) = ui.style_mut().text_styles.get_mut(&egui::TextStyle::Body) {
                 text.size = sz;
             }
         }
     }
 
-    fn get_frame_properties(&self, class: &str, default_fill: egui::Color32) -> (egui::Color32, Option<egui::Color32>, egui::Rounding) {
+    fn get_frame_properties(&self, class: &str, default_fill: egui::Color32)
+        -> (egui::Color32, Option<egui::Color32>, egui::CornerRadius)
+    {
         let base = self.get_style(class, "background-color")
             .and_then(|s| self.parse_color(&s))
             .unwrap_or(default_fill);
@@ -157,12 +175,12 @@ impl Theme {
             .and_then(|s| self.parse_color(&s));
         let rounding = self.get_style(class, "border-radius")
             .and_then(|s| s.replace("px", "").parse::<f32>().ok())
-            .map(egui::Rounding::same)
-            .unwrap_or_default();
+            .map(|val| egui::CornerRadius::same(val as u8))
+            .unwrap_or(egui::CornerRadius::default());
         (base, hover, rounding)
     }
 
-    // FIX: Use default width/height values for app-list instead of falling back to available width/height.
+    // Get the app-list size as configured.
     fn get_app_list_size(&self, ui: &egui::Ui) -> (f32, f32) {
         let w = self.get_px_value("app-list", "width").unwrap_or(300.0);
         let h = self.get_px_value("app-list", "height").unwrap_or(200.0);
@@ -288,7 +306,6 @@ impl EframeGui {
             .with_active(true)
             .with_transparent(true)
             .with_position(egui::pos2(0.0, 0.0));
-
         let native_options = eframe::NativeOptions {
             viewport: viewport_builder,
             ..Default::default()
@@ -337,11 +354,11 @@ impl EframeWrapper {
     fn render_search_bar(&mut self, ui: &mut egui::Ui) {
         with_alignment(ui, &self.theme, "search-bar", |ui| {
             self.theme.apply_style(ui, "search-bar");
-            let (base_bg, hover_bg, rounding) = self.theme.get_frame_properties("search-bar", ui.visuals().window_fill);
+            let (base_bg, hover_bg, rounding) = self.theme.get_frame_properties("search-bar", ui.visuals().panel_fill);
             let rect = ui.available_rect_before_wrap();
             let resp = ui.interact(rect, ui.id().with("search-bar"), egui::Sense::hover());
             let fill = if resp.hovered() { hover_bg.unwrap_or(base_bg) } else { base_bg };
-            egui::Frame::none().fill(fill).rounding(rounding).show(ui, |ui| {
+            egui::Frame::NONE.fill(fill).corner_radius(rounding).show(ui, |ui| {
                 with_custom_style(ui, |s| {
                     if let Some(tc) = self.theme.get_style("search-bar", "text-color")
                         .and_then(|s| self.theme.parse_color(&s)) {
@@ -377,7 +394,10 @@ impl EframeWrapper {
                 let (base, hover, rounding) = self.theme.get_frame_properties("volume-slider", ui.style().visuals.widgets.inactive.bg_fill);
                 let mut slider_visuals = ui.style().visuals.widgets.inactive.clone();
                 slider_visuals.bg_fill = base;
-                slider_visuals.rounding = rounding;
+                slider_visuals = WidgetVisuals {
+                    corner_radius: rounding,
+                    ..slider_visuals
+                };
                 with_custom_style(ui, |s| {
                     s.visuals.widgets.inactive = slider_visuals.clone();
                     s.visuals.widgets.hovered.bg_fill = hover.unwrap_or(base);
@@ -400,8 +420,6 @@ impl EframeWrapper {
         });
     }
 
-    // Instead of using the full available width/height as fallback, we now use default sizes
-    // so that the x and y positioning of the app-list works as intended.
     fn render_app_list(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.theme.apply_style(ui, "app-list");
         let (w, h) = self.theme.get_app_list_size(ui);
@@ -409,7 +427,7 @@ impl EframeWrapper {
             for app_name in self.app.get_search_results() {
                 ui.horizontal(|ui| {
                     let mut settings_clicked = false;
-                    let icon_size = egui::Vec2::splat(18.0);
+                    let icon_size = egui::vec2(18.0, 18.0);
                     let (icon_rect, icon_resp) = ui.allocate_exact_size(icon_size, egui::Sense::click());
                     if icon_resp.clicked() && self.editing.is_none() {
                         settings_clicked = true;
@@ -441,7 +459,7 @@ impl EframeWrapper {
                         let gear_font = egui::TextStyle::Button.resolve(ui.style());
                         let center_align = egui::Align2([egui::Align::Center, egui::Align::Center]);
                         let gear_size = ui.fonts(|f| f.layout_no_wrap(gear.to_owned(), gear_font.clone(), gear_color).size());
-                        let gear_pos = egui::Pos2::new(
+                        let gear_pos = egui::pos2(
                             icon_rect.center().x - gear_size.x / 2.0,
                             icon_rect.center().y - gear_size.y / 2.0
                         );
@@ -519,7 +537,7 @@ impl eframe::App for EframeWrapper {
             .unwrap_or(egui::Color32::BLACK);
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(bg))
+            .frame(egui::Frame::NONE.fill(bg))
             .show(ctx, |ui| {
                 let mut secs = vec!["search-bar", "app-list"];
                 if cfg.enable_audio_control { secs.push("volume-slider"); }
@@ -532,12 +550,11 @@ impl eframe::App for EframeWrapper {
                         let x = self.theme.get_px_value("app-list", "x").unwrap_or(0.0);
                         let y = self.theme.get_px_value("app-list", "y").unwrap_or(0.0);
                         let (w, h) = self.theme.get_app_list_size(ui);
-                        // Use an anchored area so that x, y, width, and height are all respected.
-                        egui::Area::new("app-list".into())
+                        egui::Area::new("app-list".to_owned().into())
                             .order(egui::Order::Foreground)
                             .anchor(egui::Align2::LEFT_TOP, egui::vec2(x, y))
                             .show(ctx, |ui| {
-                                ui.allocate_ui(egui::Vec2::new(w, h), |ui| {
+                                ui.allocate_ui(egui::vec2(w, h), |ui| {
                                     self.render_section(ui, sec, ctx);
                                 });
                             });
@@ -547,8 +564,7 @@ impl eframe::App for EframeWrapper {
                     ) {
                         let w = self.theme.get_px_value(sec, "width");
                         let h = self.theme.get_px_value(sec, "height");
-                        
-                        egui::Area::new(sec.into())
+                        egui::Area::new(sec.to_owned().into())
                             .order(egui::Order::Foreground)
                             .fixed_pos(egui::pos2(x, y))
                             .show(ctx, |ui| {
@@ -562,82 +578,28 @@ impl eframe::App for EframeWrapper {
                 }
             });
 
-        if let Some((app_name, mut opts)) = self.editing.take() {
-            let (mut save, mut cancel) = (false, false);
-            let width = self.theme.get_px_value("env-window", "width").unwrap_or(300.0);
-            let height = self.theme.get_px_value("env-window", "height").unwrap_or(200.0);
-            let x = self.theme.get_px_value("env-window", "x")
-                .unwrap_or((ctx.input(|i| i.screen_rect().width()) - width) / 2.0);
-            let y = self.theme.get_px_value("env-window", "y")
-                .unwrap_or((ctx.input(|i| i.screen_rect().height()) - height) / 2.0);
-            egui::Area::new("env-window".into())
-                .order(egui::Order::Foreground)
-                .movable(true)
-                .fixed_pos(egui::Pos2::new(x, y))
-                .show(ctx, |ui| {
-                    ui.set_width(width);
-                    ui.set_height(height);
-                    ui.vertical(|ui| {
-                        let header_height = 20.0;
-                        let (header_rect, _header_resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), header_height), egui::Sense::click_and_drag());
-                        ui.painter().text(
-                            header_rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            format!("Environment Variables for {}", app_name),
-                            ui.style().text_styles.get(&egui::TextStyle::Body).cloned().unwrap_or_else(|| egui::FontId::default()),
-                            ui.visuals().override_text_color.unwrap_or(egui::Color32::WHITE),
-                        );
-                        ui.add_space(4.0);
-                        let env_input_bg = self.theme.get_style("env-input", "background-color")
-                            .and_then(|s| self.theme.parse_color(&s))
-                            .unwrap_or(egui::Color32::TRANSPARENT);
-                        egui::Frame::none()
-                            .fill(env_input_bg)
-                            .show(ui, |ui| {
-                                if let (Some(w), Some(h)) = (self.theme.get_px_value("env-input", "width"), self.theme.get_px_value("env-input", "height")) {
-                                    ui.set_width(w);
-                                    ui.set_height(h);
-                                }
-                                with_alignment(ui, &self.theme, "env-input", |ui| {
-                                    self.theme.apply_style(ui, "env-input");
-                                    ui.add(egui::TextEdit::singleline(&mut opts)
-                                        .hint_text("Enter env variables...")
-                                        .frame(false)
-                                    );
-                                });
-                            });
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            with_custom_style(ui, |s| { self.theme.apply_widget_style(s, "edit-button"); }, |ui| {
-                                if ui.button("Save").clicked() { save = true; }
-                                if ui.button("Cancel").clicked() { cancel = true; }
-                            });
-                        });
-                    });
-                });
-            if save {
-                self.app.handle_input(&format!("LAUNCH_OPTIONS:{}:{}", app_name, opts));
-            } else if !cancel {
-                self.editing = Some((app_name, opts));
+        // Handle env-window key events:
+        let esc_pressed = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        let enter_pressed = ctx.input(|i| i.key_pressed(egui::Key::Enter));
+        if esc_pressed {
+            if self.editing.is_some() {
+                // Close the env-input window without exiting the app.
+                self.editing = None;
+            } else {
+                self.app.handle_input("ESC");
+            }
+        }
+        if enter_pressed {
+            if let Some((n, o)) = self.editing.take() {
+                self.app.handle_input(&format!("LAUNCH_OPTIONS:{}:{}", n, o));
+            } else {
+                self.app.handle_input("ENTER");
             }
         }
 
-        let (esc, enter) = ctx.input(|i| (i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Enter)));
-        match (esc, enter) {
-            (true, _) => {
-                if self.editing.is_some() { self.editing = None; }
-                else { self.app.handle_input("ESC"); }
-            }
-            (_, true) => {
-                if let Some((n, o)) = self.editing.take() {
-                    self.app.handle_input(&format!("LAUNCH_OPTIONS:{}:{}", n, o));
-                } else { self.app.handle_input("ENTER"); }
-            }
-            _ => {}
-        }
-
+        // Only exit the entire application if the main app signals it.
         if self.app.should_quit() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            process::exit(0);
         }
     }
 }
