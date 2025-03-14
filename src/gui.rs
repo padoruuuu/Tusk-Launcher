@@ -10,7 +10,128 @@ use egui::style::WidgetVisuals; // For widget styling.
 use crate::{config::Config, app_launcher::AppLaunchOptions, audio::AudioController, cache::IconManager};
 use xdg;
 
-const DEFAULT_THEME: &str = "";
+const DEFAULT_THEME: &str = "/* Centered Streamlined Compact Theme with Absolute Positioning */
+
+/* Main Window */
+.main-window {
+    background-color: rgba(0, 0, 0, 0.9);
+    width: 300px;
+    height: 200px;
+}
+
+/* Search Bar */
+.search-bar {
+    x: 60px;
+    y: 10px;
+    width: 150px;
+    height: 25px;
+    background-color: rgba(59, 66, 82, 1);
+    hover-background-color: rgba(76, 86, 106, 1);
+    border-radius: 6px;
+    text-color: rgba(236, 239, 244, 1);
+    padding: 4px;
+    font-size: 12px;
+}
+
+/* App List */
+.app-list {
+    x: 62px;
+    y: 40px;
+    width: 0px;
+    height: 300px;
+    background-color: rgba(46, 52, 64, 1);
+    padding: 3px;
+}
+
+/* App Item */
+.app-item {
+    y: 40px;
+    x: 162px;
+    width: 100%;
+    background-color: rgba(122, 162, 247, 1);
+    hover-background-color: rgba(102, 138, 196, 1);
+    text-color: rgba(236, 239, 244, 1);
+    /*background-color: rgba(59, 66, 82, 1);*/
+    border-radius: 4px;
+    padding: 3px;
+}
+
+/* Time Display */
+.time-display {
+    x: 72px;
+    y: 145px;
+    width: 200px;
+    height: 50px;
+    background-color: rgba(46, 52, 64, 1);
+    text-color: rgba(236, 239, 244, 1);
+    text-align: center;
+}
+
+/* Volume Slider */
+.volume-slider {
+    x: 50px;
+    y: 160px;
+    width: 200px;
+    height: 20px;
+    background-color: rgba(46, 52, 64, 1);
+    hover-background-color: rgba(67, 76, 94, 1);
+    text-color: rgba(236, 239, 244, 1);
+    border-radius: 4px;
+}
+
+/* Power Controls */
+.power-button {
+    x: 60px;
+    y: 165px;
+    width: 65px;
+    height: 15px;
+    background-color: rgba(122, 162, 247, 1 );
+    hover-background-color: rgba(102, 138, 196, 1);
+    text-color: rgba(236, 239, 244, 1);
+    border-radius: 4px;
+}
+
+.restart-button {
+    x: 127px;
+    y: 165px;
+    width: 65px;
+    height: 15px;
+    background-color: rgba(122, 162, 247, 1);
+    hover-background-color: rgba(102, 138, 196, 1);
+    text-color: rgba(236, 239, 244, 1);
+    border-radius: 4px;
+}
+
+.logout-button {
+    x: 194px;
+    y: 165px;
+    width: 65px;
+    height: 15px;
+    background-color: rgba(122, 162, 247, 1);
+    hover-background-color: rgba(102, 138, 196, 1);
+    text-color: rgba(236, 239, 244, 1);
+    border-radius: 4px;
+}
+
+/* Environment Variable Input Window */
+.env-input {
+    background-color: rgba(59, 66, 82, 1);
+    text-color: rgba(236, 239, 244, 1);
+    padding: 6px;
+    font-size: 12px;
+    border-radius: 4px;
+    width: 300px;
+    height: 50px;
+}
+
+/* Edit Button */
+.edit-button {
+    background-color: rgba(122, 162, 247, 1);
+    hover-background-color: rgba(102, 138, 196, 1);
+    text-color: rgba(236, 239, 244, 1);
+    border-radius: 4px;
+    padding: 3px;
+}";
 
 struct Rule {
     class_name: String,
