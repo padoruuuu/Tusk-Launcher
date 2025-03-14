@@ -162,6 +162,13 @@ impl Theme {
         (base, hover, rounding)
     }
 
+    // FIX: Use default width/height values for app-list instead of falling back to available width/height.
+    fn get_app_list_size(&self, ui: &egui::Ui) -> (f32, f32) {
+        let w = self.get_px_value("app-list", "width").unwrap_or(300.0);
+        let h = self.get_px_value("app-list", "height").unwrap_or(200.0);
+        (w, h)
+    }
+
     fn get_px_value(&self, class: &str, prop: &str) -> Option<f32> {
         self.get_style(class, prop).and_then(|s| s.trim_end_matches("px").parse::<f32>().ok())
     }
@@ -225,9 +232,6 @@ fn with_custom_style<R>(ui: &mut egui::Ui, modify: impl FnOnce(&mut egui::Style)
 }
 
 fn with_alignment<R>(ui: &mut egui::Ui, theme: &Theme, section: &str, f: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    if section == "app-list" {
-        return ui.vertical_centered(f).inner;
-    }
     if let Some(pos) = theme.get_style(section, "position") {
         let layout = match pos.as_str() {
             "center" => egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
@@ -275,37 +279,46 @@ impl EframeGui {
             .or_else(|| theme.get_style("env-window", "height"))
             .and_then(|s| s.trim_end_matches("px").parse::<f32>().ok())
             .unwrap_or(200.0);
+        
         let viewport_builder = egui::ViewportBuilder::default()
             .with_inner_size([width, height])
             .with_always_on_top()
             .with_decorations(false)
             .with_resizable(false)
             .with_active(true)
-            .with_transparent(true);
+            .with_transparent(true)
+            .with_position(egui::pos2(0.0, 0.0));
+
         let native_options = eframe::NativeOptions {
             viewport: viewport_builder,
             ..Default::default()
         };
+
         let cfg = app.get_config();
         let audio = AudioController::new(cfg)?;
         audio.start_polling(cfg);
-        eframe::run_native("Application Launcher", native_options, Box::new(|cc| {
-            if let Some(scaling_str) = theme.get_style("env-window", "scaling") {
-                if let Ok(scaling) = scaling_str.trim().parse::<f32>() {
-                    cc.egui_ctx.set_pixels_per_point(scaling);
+
+        eframe::run_native(
+            "Application Launcher",
+            native_options,
+            Box::new(|cc| {
+                if let Some(scaling_str) = theme.get_style("env-window", "scaling") {
+                    if let Ok(scaling) = scaling_str.trim().parse::<f32>() {
+                        cc.egui_ctx.set_pixels_per_point(scaling);
+                    }
                 }
-            }
-            cc.egui_ctx.request_repaint();
-            Box::new(EframeWrapper {
-                app,
-                audio_controller: audio,
-                current_volume: 0.0,
-                editing: None,
-                focused: false,
-                icon_manager: IconManager::new(),
-                theme,
-            })
-        }))?;
+                cc.egui_ctx.request_repaint();
+                Ok(Box::new(EframeWrapper {
+                    app,
+                    audio_controller: audio,
+                    current_volume: 0.0,
+                    editing: None,
+                    focused: false,
+                    icon_manager: IconManager::new(),
+                    theme,
+                }))
+            }),
+        )?;
         Ok(())
     }
 }
@@ -387,71 +400,72 @@ impl EframeWrapper {
         });
     }
 
+    // Instead of using the full available width/height as fallback, we now use default sizes
+    // so that the x and y positioning of the app-list works as intended.
     fn render_app_list(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        with_alignment(ui, &self.theme, "app-list", |ui| {
-            self.theme.apply_style(ui, "app-list");
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for app_name in self.app.get_search_results() {
-                    ui.horizontal(|ui| {
-                        let mut settings_clicked = false;
-                        let icon_size = egui::Vec2::splat(18.0);
-                        let (icon_rect, icon_resp) = ui.allocate_exact_size(icon_size, egui::Sense::click());
-                        if icon_resp.clicked() && self.editing.is_none() {
-                            settings_clicked = true;
-                        }
-                        if ui.is_rect_visible(icon_rect) {
-                            if let Some(tex) = self.app.get_icon_path(&app_name)
-                                .and_then(|p| self.icon_manager.get_texture(ctx, &p)) {
-                                ui.painter().image(
-                                    tex.id(),
-                                    icon_rect,
-                                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
-                                    egui::Color32::WHITE,
-                                );
-                            }
-                            let gear = "⚙";
-                            let gear_color = if icon_resp.hovered() {
-                                self.theme.get_style("settings-button", "hover-color")
-                                    .and_then(|s| self.theme.parse_color(&s))
-                                    .unwrap_or(egui::Color32::from_rgb(64, 64, 64))
-                            } else {
-                                self.theme.get_style("settings-button", "text-color")
-                                    .and_then(|s| self.theme.parse_color(&s))
-                                    .unwrap_or(egui::Color32::from_rgb(64, 64, 64))
-                            };
-                            if let Some(hitbox_color) = self.theme.get_combined_style(&["settings-button"], "hitbox-color")
-                                .and_then(|s| self.theme.parse_color(&s)) {
-                                ui.painter().rect_filled(icon_rect, 0.0, hitbox_color);
-                            }
-                            let gear_font = egui::TextStyle::Button.resolve(ui.style());
-                            let center_align = egui::Align2([egui::Align::Center, egui::Align::Center]);
-                            let gear_size = ui.fonts(|f| f.layout_no_wrap(gear.to_owned(), gear_font.clone(), gear_color).size());
-                            let gear_pos = egui::Pos2::new(
-                                icon_rect.center().x - gear_size.x / 2.0,
-                                icon_rect.center().y - gear_size.y / 2.0
+        self.theme.apply_style(ui, "app-list");
+        let (w, h) = self.theme.get_app_list_size(ui);
+        ui.vertical(|ui| {
+            for app_name in self.app.get_search_results() {
+                ui.horizontal(|ui| {
+                    let mut settings_clicked = false;
+                    let icon_size = egui::Vec2::splat(18.0);
+                    let (icon_rect, icon_resp) = ui.allocate_exact_size(icon_size, egui::Sense::click());
+                    if icon_resp.clicked() && self.editing.is_none() {
+                        settings_clicked = true;
+                    }
+                    if ui.is_rect_visible(icon_rect) {
+                        if let Some(tex) = self.app.get_icon_path(&app_name)
+                            .and_then(|p| self.icon_manager.get_texture(ctx, &p)) {
+                            ui.painter().image(
+                                tex.id(),
+                                icon_rect,
+                                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
+                                egui::Color32::WHITE,
                             );
-                            ui.painter().text(gear_pos, center_align, gear, gear_font, gear_color);
                         }
-                        if settings_clicked {
-                            let opts = if self.app.get_launch_options(&app_name).is_some() {
-                                self.app.start_launch_options_edit(&app_name)
-                            } else {
-                                String::new()
-                            };
-                            self.editing = Some((app_name.clone(), opts));
+                        let gear = "⚙";
+                        let gear_color = if icon_resp.hovered() {
+                            self.theme.get_style("settings-button", "hover-color")
+                                .and_then(|s| self.theme.parse_color(&s))
+                                .unwrap_or(egui::Color32::from_rgb(64, 64, 64))
                         } else {
-                            with_custom_style(ui, |s| {
-                                self.theme.apply_combined_widget_style(s, &["app-item", "app-button"]);
-                            }, |ui| {
-                                if ui.button(&app_name).clicked() {
-                                    self.app.launch_app(&app_name);
-                                }
-                            });
+                            self.theme.get_style("settings-button", "text-color")
+                                .and_then(|s| self.theme.parse_color(&s))
+                                .unwrap_or(egui::Color32::from_rgb(64, 64, 64))
+                        };
+                        if let Some(hitbox_color) = self.theme.get_combined_style(&["settings-button"], "hitbox-color")
+                            .and_then(|s| self.theme.parse_color(&s)) {
+                            ui.painter().rect_filled(icon_rect, 0.0, hitbox_color);
                         }
-                    });
-                    ui.add_space(4.0);
-                }
-            });
+                        let gear_font = egui::TextStyle::Button.resolve(ui.style());
+                        let center_align = egui::Align2([egui::Align::Center, egui::Align::Center]);
+                        let gear_size = ui.fonts(|f| f.layout_no_wrap(gear.to_owned(), gear_font.clone(), gear_color).size());
+                        let gear_pos = egui::Pos2::new(
+                            icon_rect.center().x - gear_size.x / 2.0,
+                            icon_rect.center().y - gear_size.y / 2.0
+                        );
+                        ui.painter().text(gear_pos, center_align, gear, gear_font, gear_color);
+                    }
+                    if settings_clicked {
+                        let opts = if self.app.get_launch_options(&app_name).is_some() {
+                            self.app.start_launch_options_edit(&app_name)
+                        } else {
+                            String::new()
+                        };
+                        self.editing = Some((app_name.clone(), opts));
+                    } else {
+                        with_custom_style(ui, |s| {
+                            self.theme.apply_combined_widget_style(s, &["app-item", "app-button"]);
+                        }, |ui| {
+                            if ui.button(&app_name).clicked() {
+                                self.app.launch_app(&app_name);
+                            }
+                        });
+                    }
+                });
+                ui.add_space(4.0);
+            }
         });
     }
 
@@ -503,6 +517,7 @@ impl eframe::App for EframeWrapper {
             .or_else(|| self.theme.get_style("main-window", "background-color"))
             .and_then(|s| self.theme.parse_color(&s))
             .unwrap_or(egui::Color32::BLACK);
+
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(bg))
             .show(ctx, |ui| {
@@ -511,16 +526,31 @@ impl eframe::App for EframeWrapper {
                 if cfg.show_time { secs.push("time-display"); }
                 if cfg.enable_power_options { secs.push("power-button"); }
                 secs.sort_by_key(|sec| self.theme.get_order(sec));
+
                 for sec in secs {
-                    if let (Some(x), Some(y)) = (
+                    if sec == "app-list" {
+                        let x = self.theme.get_px_value("app-list", "x").unwrap_or(0.0);
+                        let y = self.theme.get_px_value("app-list", "y").unwrap_or(0.0);
+                        let (w, h) = self.theme.get_app_list_size(ui);
+                        // Use an anchored area so that x, y, width, and height are all respected.
+                        egui::Area::new("app-list".into())
+                            .order(egui::Order::Foreground)
+                            .anchor(egui::Align2::LEFT_TOP, egui::vec2(x, y))
+                            .show(ctx, |ui| {
+                                ui.allocate_ui(egui::Vec2::new(w, h), |ui| {
+                                    self.render_section(ui, sec, ctx);
+                                });
+                            });
+                    } else if let (Some(x), Some(y)) = (
                         self.theme.get_px_value(sec, "x"),
                         self.theme.get_px_value(sec, "y")
                     ) {
                         let w = self.theme.get_px_value(sec, "width");
                         let h = self.theme.get_px_value(sec, "height");
+                        
                         egui::Area::new(sec.into())
                             .order(egui::Order::Foreground)
-                            .fixed_pos(egui::Pos2::new(x, y))
+                            .fixed_pos(egui::pos2(x, y))
                             .show(ctx, |ui| {
                                 if let Some(w) = w { ui.set_width(w); }
                                 if let Some(h) = h { ui.set_height(h); }
@@ -531,6 +561,7 @@ impl eframe::App for EframeWrapper {
                     }
                 }
             });
+
         if let Some((app_name, mut opts)) = self.editing.take() {
             let (mut save, mut cancel) = (false, false);
             let width = self.theme.get_px_value("env-window", "width").unwrap_or(300.0);
@@ -547,7 +578,6 @@ impl eframe::App for EframeWrapper {
                     ui.set_width(width);
                     ui.set_height(height);
                     ui.vertical(|ui| {
-                        // Header drag-handle: allocate a 20px tall region with click_and_drag sense.
                         let header_height = 20.0;
                         let (header_rect, _header_resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), header_height), egui::Sense::click_and_drag());
                         ui.painter().text(
@@ -558,7 +588,6 @@ impl eframe::App for EframeWrapper {
                             ui.visuals().override_text_color.unwrap_or(egui::Color32::WHITE),
                         );
                         ui.add_space(4.0);
-                        // env-input area: apply background from CSS for "env-input"
                         let env_input_bg = self.theme.get_style("env-input", "background-color")
                             .and_then(|s| self.theme.parse_color(&s))
                             .unwrap_or(egui::Color32::TRANSPARENT);
@@ -578,7 +607,6 @@ impl eframe::App for EframeWrapper {
                                 });
                             });
                         ui.add_space(4.0);
-                        // Save and Cancel buttons with themed styling
                         ui.horizontal(|ui| {
                             with_custom_style(ui, |s| { self.theme.apply_widget_style(s, "edit-button"); }, |ui| {
                                 if ui.button("Save").clicked() { save = true; }
@@ -593,6 +621,7 @@ impl eframe::App for EframeWrapper {
                 self.editing = Some((app_name, opts));
             }
         }
+
         let (esc, enter) = ctx.input(|i| (i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Enter)));
         match (esc, enter) {
             (true, _) => {
@@ -606,6 +635,7 @@ impl eframe::App for EframeWrapper {
             }
             _ => {}
         }
+
         if self.app.should_quit() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
