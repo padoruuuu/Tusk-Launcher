@@ -59,7 +59,7 @@ const DEFAULT_THEME: &str = "/* Centered Streamlined Compact Theme with Absolute
 /* Time Display */
 .time-display {
     x: 72px;
-    y: 145px;
+    y: 140px;
     width: 200px;
     height: 50px;
     background-color: rgba(46, 52, 64, 1);
@@ -69,10 +69,10 @@ const DEFAULT_THEME: &str = "/* Centered Streamlined Compact Theme with Absolute
 
 /* Volume Slider */
 .volume-slider {
-    x: 50px;
-    y: 160px;
+    x: 40px;
+    y: 155px;
     width: 200px;
-    height: 20px;
+    height: 50px;
     background-color: rgba(46, 52, 64, 1);
     hover-background-color: rgba(67, 76, 94, 1);
     text-color: rgba(236, 239, 244, 1);
@@ -82,7 +82,7 @@ const DEFAULT_THEME: &str = "/* Centered Streamlined Compact Theme with Absolute
 /* Power Controls */
 .power-button {
     x: 60px;
-    y: 165px;
+    y: 190px;
     width: 65px;
     height: 15px;
     background-color: rgba(122, 162, 247, 1 );
