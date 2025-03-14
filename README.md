@@ -9,7 +9,7 @@ AUR: https://aur.archlinux.org/packages/tusk-launcher-git
 
 Alternatively use the provided pkgbuild.
 
-what it looks like with example theme.css:
+what it looks like with default theme.css:
 
 
 ![image](https://github.com/user-attachments/assets/9a25468a-d1b2-4cc8-b542-59c99052dbf5)
