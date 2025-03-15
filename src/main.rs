@@ -7,10 +7,9 @@ mod config;
 mod audio;
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Write, Seek, SeekFrom, ErrorKind};
+use std::io::{self, Write, ErrorKind};
 use std::os::unix::fs::OpenOptionsExt;
 use std::process::{self, Command, Stdio};
-use std::path::Path;
 
 use crate::gui::EframeGui;
 use crate::config::load_config;
@@ -18,166 +17,124 @@ use crate::clock::get_current_time;
 
 const PID_FILE_PATH: &str = "/tmp/tusk-launcher.pid";
 
+#[allow(dead_code)] // `file` is used in `Drop` for cleanup
 struct PidFileGuard {
     file: File,
 }
 
 impl Drop for PidFileGuard {
     fn drop(&mut self) {
-        let _ = fs::remove_file(PID_FILE_PATH);
+        let _ = fs::remove_file(PID_FILE_PATH); // Fast cleanup on exit
     }
 }
 
-/// Check if a process with the given PID exists
+/// Check if a process exists using `kill -0`.
 fn process_exists(pid: u32) -> bool {
     Command::new("kill")
         .args(&["-0", &pid.to_string()])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map(|status| status.success())
+        .map(|s| s.success())
         .unwrap_or(false)
 }
 
-fn clean_stale_pid_file() -> io::Result<()> {
-    if let Ok(content) = fs::read_to_string(PID_FILE_PATH) {
-        if let Ok(pid) = content.trim().parse::<u32>() {
-            if !process_exists(pid) {
-                let _ = fs::remove_file(PID_FILE_PATH);
+/// Get the PID if the process is running, else clean up and return None.
+fn get_running_pid() -> io::Result<Option<u32>> {
+    match fs::read_to_string(PID_FILE_PATH) {
+        Ok(content) => match content.trim().parse::<u32>() {
+            Ok(pid) => {
+                if process_exists(pid) {
+                    Ok(Some(pid))
+                } else {
+                    let _ = fs::remove_file(PID_FILE_PATH); // Remove stale PID file
+                    Ok(None)
+                }
             }
-        } else {
-            // Invalid PID format
-            let _ = fs::remove_file(PID_FILE_PATH);
+            Err(_) => {
+                let _ = fs::remove_file(PID_FILE_PATH); // Remove invalid PID file
+                Ok(None)
+            }
+        },
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Acquire PID lock, removing stale files and retrying on race conditions.
+fn acquire_pid_lock() -> io::Result<PidFileGuard> {
+    loop {
+        match get_running_pid()? {
+            Some(pid) => return Err(io::Error::new(ErrorKind::WouldBlock, format!("Instance running with PID {}", pid))),
+            None => match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o644)
+                .open(PID_FILE_PATH)
+            {
+                Ok(mut file) => {
+                    file.write_all(process::id().to_string().as_bytes())?;
+                    file.flush()?;
+                    return Ok(PidFileGuard { file });
+                }
+                Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                    // Race condition: another process wrote the file; check again
+                    if let Some(_) = get_running_pid()? {
+                        return Err(io::Error::new(ErrorKind::WouldBlock, "Instance running"));
+                    }
+                    let _ = fs::remove_file(PID_FILE_PATH); // Force remove if stale
+                    continue;
+                }
+                Err(e) => return Err(e),
+            },
         }
     }
-    Ok(())
 }
 
-fn acquire_pid_lock() -> io::Result<PidFileGuard> {
-    clean_stale_pid_file()?;
-    
-    // Try to create the PID file exclusively
-    let file = match OpenOptions::new()
-        .write(true)
-        .read(true)
-        .create_new(true)  // This is crucial - fails if file exists
-        .mode(0o644)
-        .open(PID_FILE_PATH) {
-            Ok(file) => file,
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
-                // Check if the PID file belongs to a running process
-                if let Ok(content) = fs::read_to_string(PID_FILE_PATH) {
-                    if let Ok(pid) = content.trim().parse::<u32>() {
-                        if process_exists(pid) {
-                            return Err(io::Error::new(ErrorKind::WouldBlock, "Another instance is running"));
-                        }
-                    }
-                }
-                
-                // Stale PID file, remove it and retry
-                let _ = fs::remove_file(PID_FILE_PATH);
-                
-                OpenOptions::new()
-                    .write(true)
-                    .read(true)
-                    .create_new(true)
-                    .mode(0o644)
-                    .open(PID_FILE_PATH)?
-            },
-            Err(e) => return Err(e),
-        };
-    
-    // Write PID
-    let pid = process::id().to_string();
-    let mut file = file;
-    file.write_all(pid.as_bytes())?;
-    file.flush()?;
-
-    // Verify
-    file.seek(SeekFrom::Start(0))?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)?;
-    if contents.trim() != pid {
-        return Err(io::Error::new(ErrorKind::Other, "Failed to verify PID write"));
-    }
-
-    Ok(PidFileGuard { file })
-}
-
-fn send_focus_signal() -> Result<(), Box<dyn std::error::Error>> {
-    if !Path::new(PID_FILE_PATH).exists() {
-        return Err(Box::new(io::Error::new(
-            io::ErrorKind::NotFound,
-            "PID file does not exist"
-        )));
-    }
-
-    let content = fs::read_to_string(PID_FILE_PATH)?.trim().to_string();
-    if content.is_empty() {
-        return Err(Box::new(io::Error::new(io::ErrorKind::InvalidData, "PID file is empty")));
-    }
-    
-    let pid: u32 = content.parse().map_err(|e| {
-        io::Error::new(io::ErrorKind::InvalidData, format!("Invalid PID format: {}", e))
-    })?;
-
-    // Check if process exists
-    if !process_exists(pid) {
-        let _ = fs::remove_file(PID_FILE_PATH);
-        return Err(Box::new(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Process with PID {} does not exist", pid),
-        )));
-    }
-
-    // Send SIGUSR1 signal using the kill command
+/// Send SIGUSR1 to focus an existing instance.
+fn send_focus_signal(pid: u32) -> io::Result<()> {
     let status = Command::new("kill")
         .args(&["-SIGUSR1", &pid.to_string()])
-        .status()
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-    
-    if !status.success() {
-        return Err(Box::new(io::Error::new(
-            io::ErrorKind::Other, 
-            format!("Failed to send signal to process {}", pid)
-        )));
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::new(ErrorKind::Other, "Failed to send focus signal"))
     }
-
-    Ok(())
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Attempt to acquire the PID lock
+fn main() {
     let pid_guard = match acquire_pid_lock() {
         Ok(guard) => guard,
         Err(e) if e.kind() == ErrorKind::WouldBlock => {
-            // If the lock is held, try to send the focus signal
-            match send_focus_signal() {
-                Ok(_) => {
-                    println!("Successfully focused existing instance");
-                    return Ok(());
+            if let Ok(Some(pid)) = get_running_pid() {
+                if send_focus_signal(pid).is_ok() {
+                    println!("Focused existing instance");
+                    std::process::exit(0);
                 }
+            }
+            match acquire_pid_lock() {
+                Ok(guard) => guard,
                 Err(e) => {
-                    eprintln!("Failed to focus existing instance: {}. Attempting to recover...", e);
-                    clean_stale_pid_file()?;
-                    match acquire_pid_lock() {
-                        Ok(guard) => guard,
-                        Err(e) => return Err(e.into()),
-                    }
+                    eprintln!("Failed to acquire PID lock after focus attempt: {}", e);
+                    std::process::exit(1);
                 }
             }
         }
-        Err(e) => return Err(e.into()),
+        Err(e) => {
+            eprintln!("Failed to acquire PID lock: {}", e);
+            std::process::exit(1);
+        }
     };
 
-    // Keep the pid_guard alive
     let _pid_guard = pid_guard;
 
-    // Launch the application
     let config = load_config();
-    let current_time = get_current_time(&config);
-    println!("Current time: {}", current_time);
+    println!("Current time: {}", get_current_time(&config));
 
     let app = Box::new(app_launcher::AppLauncher::default());
-    EframeGui::run(app)
+    if let Err(e) = EframeGui::run(app) {
+        eprintln!("Error running application: {}", e);
+        std::process::exit(1);
+    }
 }
