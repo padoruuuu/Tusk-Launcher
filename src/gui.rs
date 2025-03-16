@@ -10,128 +10,7 @@ use egui::style::WidgetVisuals; // For widget styling.
 use crate::{config::Config, app_launcher::AppLaunchOptions, audio::AudioController, cache::IconManager};
 use xdg;
 
-const DEFAULT_THEME: &str = "/* Centered Streamlined Compact Theme with Absolute Positioning */
-
-/* Main Window */
-.main-window {
-    background-color: rgba(0, 0, 0, 0.9);
-    width: 300px;
-    height: 200px;
-}
-
-/* Search Bar */
-.search-bar {
-    x: 60px;
-    y: 10px;
-    width: 150px;
-    height: 25px;
-    background-color: rgba(59, 66, 82, 1);
-    hover-background-color: rgba(76, 86, 106, 1);
-    border-radius: 6px;
-    text-color: rgba(236, 239, 244, 1);
-    padding: 4px;
-    font-size: 12px;
-}
-
-/* App List */
-.app-list {
-    x: 62px;
-    y: 40px;
-    width: 0px;
-    height: 300px;
-    background-color: rgba(46, 52, 64, 1);
-    padding: 3px;
-}
-
-/* App Item */
-.app-item {
-    y: 40px;
-    x: 162px;
-    width: 100%;
-    background-color: rgba(122, 162, 247, 1);
-    hover-background-color: rgba(102, 138, 196, 1);
-    text-color: rgba(236, 239, 244, 1);
-    /*background-color: rgba(59, 66, 82, 1);*/
-    border-radius: 4px;
-    padding: 3px;
-}
-
-/* Time Display */
-.time-display {
-    x: 72px;
-    y: 140px;
-    width: 200px;
-    height: 50px;
-    background-color: rgba(46, 52, 64, 1);
-    text-color: rgba(236, 239, 244, 1);
-    text-align: center;
-}
-
-/* Volume Slider */
-.volume-slider {
-    x: 40px;
-    y: 155px;
-    width: 200px;
-    height: 50px;
-    background-color: rgba(46, 52, 64, 1);
-    hover-background-color: rgba(67, 76, 94, 1);
-    text-color: rgba(236, 239, 244, 1);
-    border-radius: 4px;
-}
-
-/* Power Controls */
-.power-button {
-    x: 60px;
-    y: 190px;
-    width: 65px;
-    height: 15px;
-    background-color: rgba(122, 162, 247, 1 );
-    hover-background-color: rgba(102, 138, 196, 1);
-    text-color: rgba(236, 239, 244, 1);
-    border-radius: 4px;
-}
-
-.restart-button {
-    x: 127px;
-    y: 165px;
-    width: 65px;
-    height: 15px;
-    background-color: rgba(122, 162, 247, 1);
-    hover-background-color: rgba(102, 138, 196, 1);
-    text-color: rgba(236, 239, 244, 1);
-    border-radius: 4px;
-}
-
-.logout-button {
-    x: 194px;
-    y: 165px;
-    width: 65px;
-    height: 15px;
-    background-color: rgba(122, 162, 247, 1);
-    hover-background-color: rgba(102, 138, 196, 1);
-    text-color: rgba(236, 239, 244, 1);
-    border-radius: 4px;
-}
-
-/* Environment Variable Input Window */
-.env-input {
-    background-color: rgba(59, 66, 82, 1);
-    text-color: rgba(236, 239, 244, 1);
-    padding: 6px;
-    font-size: 12px;
-    border-radius: 4px;
-    width: 300px;
-    height: 50px;
-}
-
-/* Edit Button */
-.edit-button {
-    background-color: rgba(122, 162, 247, 1);
-    hover-background-color: rgba(102, 138, 196, 1);
-    text-color: rgba(236, 239, 244, 1);
-    border-radius: 4px;
-    padding: 3px;
-}";
+const DEFAULT_THEME: &str = r#""#;
 
 struct Rule {
     class_name: String,
@@ -246,7 +125,6 @@ impl Theme {
 
     fn apply_style(&self, ui: &mut egui::Ui, class: &str) {
         let style = ui.style_mut();
-        // Use panel_fill since window_fill was removed.
         if let Some(bg) = self.get_style(class, "background-color").and_then(|s| self.parse_color(&s)) {
             style.visuals.panel_fill = bg;
         }
@@ -301,13 +179,7 @@ impl Theme {
         (base, hover, rounding)
     }
 
-    // Now get_app_list_size takes no UI parameter.
-    fn get_app_list_size(&self) -> (f32, f32) {
-        let w = self.get_px_value("app-list", "width").unwrap_or(300.0);
-        let h = self.get_px_value("app-list", "height").unwrap_or(200.0);
-        (w, h)
-    }
-
+    // For x and y positioning only.
     fn get_px_value(&self, class: &str, prop: &str) -> Option<f32> {
         self.get_style(class, prop).and_then(|s| s.trim_end_matches("px").parse::<f32>().ok())
     }
@@ -360,6 +232,47 @@ impl Theme {
             style.visuals.override_text_color = Some(tc);
         }
     }
+
+    // Helper: get text color, using hover-text-color if hovered.
+    fn get_text_color(&self, class: &str, hovered: bool) -> Option<egui::Color32> {
+        if hovered {
+            self.get_style(class, "hover-text-color")
+                .and_then(|s| self.parse_color(&s))
+                .or_else(|| self.get_style(class, "text-color").and_then(|s| self.parse_color(&s)))
+        } else {
+            self.get_style(class, "text-color").and_then(|s| self.parse_color(&s))
+        }
+    }
+}
+
+/// A helper function that creates a custom button which parses and applies
+/// its background, hover-background, text-color, and hover-text-color based on the given style class.
+fn custom_button(ui: &mut egui::Ui, label: &str, class: &str, theme: &Theme) -> egui::Response {
+    let text_style = egui::TextStyle::Button;
+    let font_id = ui.style().text_styles.get(&text_style)
+        .cloned()
+        .unwrap_or_else(|| egui::FontId::default());
+    let galley = ui.fonts(|fonts| {
+        fonts.layout_no_wrap(label.to_owned(), font_id, egui::Color32::WHITE)
+    });
+    let desired_size = galley.size() + ui.spacing().button_padding * 2.0;
+    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+
+    if ui.is_rect_visible(rect) {
+        let (normal_bg, hover_bg, rounding) = theme.get_frame_properties(class, ui.style().visuals.widgets.inactive.bg_fill);
+        let normal_tc = theme.get_style(class, "text-color")
+            .and_then(|s| theme.parse_color(&s))
+            .unwrap_or(egui::Color32::WHITE);
+        let hover_tc = theme.get_style(class, "hover-text-color")
+            .and_then(|s| theme.parse_color(&s))
+            .unwrap_or(normal_tc);
+        let bg = if response.hovered() { hover_bg.unwrap_or(normal_bg) } else { normal_bg };
+        ui.painter().rect_filled(rect, rounding, bg);
+        let text_color = if response.hovered() { hover_tc } else { normal_tc };
+        let text_pos = rect.center() - galley.size() * 0.5;
+        ui.painter().galley(text_pos, galley, text_color);
+    }
+    response
 }
 
 fn with_custom_style<R>(ui: &mut egui::Ui, modify: impl FnOnce(&mut egui::Style), f: impl FnOnce(&mut egui::Ui) -> R) -> R {
@@ -409,15 +322,9 @@ pub trait AppInterface {
 pub struct EframeGui;
 impl EframeGui {
     pub fn run(app: Box<dyn AppInterface>) -> Result<(), Box<dyn Error>> {
-        let theme = Theme::load_or_create()?;
-        let width = theme.get_style("main-window", "width")
-            .or_else(|| theme.get_style("env-window", "width"))
-            .and_then(|s| s.trim_end_matches("px").parse::<f32>().ok())
-            .unwrap_or(300.0);
-        let height = theme.get_style("main-window", "height")
-            .or_else(|| theme.get_style("env-window", "height"))
-            .and_then(|s| s.trim_end_matches("px").parse::<f32>().ok())
-            .unwrap_or(200.0);
+        // Use fixed default window size for now.
+        let width = 300.0;
+        let height = 200.0;
         
         let viewport_builder = egui::ViewportBuilder::default()
             .with_inner_size([width, height])
@@ -436,10 +343,14 @@ impl EframeGui {
         let audio = AudioController::new(cfg)?;
         audio.start_polling(cfg);
 
+        // Load the theme once outside the closure.
+        let theme = Theme::load_or_create()?;
+        
         eframe::run_native(
             "Application Launcher",
             native_options,
-            Box::new(|cc| {
+            Box::new(move |cc| {
+                // Retrieve scaling from the theme (if available)
                 if let Some(scaling_str) = theme.get_style("env-window", "scaling") {
                     if let Ok(scaling) = scaling_str.trim().parse::<f32>() {
                         cc.egui_ctx.set_pixels_per_point(scaling);
@@ -453,7 +364,7 @@ impl EframeGui {
                     editing: None,
                     focused: false,
                     icon_manager: IconManager::new(),
-                    theme,
+                    theme, // move the theme in
                 }))
             }),
         )?;
@@ -481,8 +392,7 @@ impl EframeWrapper {
             let fill = if resp.hovered() { hover_bg.unwrap_or(base_bg) } else { base_bg };
             egui::Frame::NONE.fill(fill).corner_radius(rounding).show(ui, |ui| {
                 with_custom_style(ui, |s| {
-                    if let Some(tc) = self.theme.get_style("search-bar", "text-color")
-                        .and_then(|s| self.theme.parse_color(&s)) {
+                    if let Some(tc) = self.theme.get_text_color("search-bar", resp.hovered()) {
                         s.visuals.override_text_color = Some(tc);
                     }
                 }, |ui| {
@@ -543,12 +453,18 @@ impl EframeWrapper {
 
     fn render_app_list(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.theme.apply_style(ui, "app-list");
-        let (w, h) = self.theme.get_app_list_size();
         ui.vertical(|ui| {
             for app_name in self.app.get_search_results() {
                 ui.horizontal(|ui| {
                     let mut settings_clicked = false;
-                    let icon_size = egui::vec2(18.0, 18.0);
+                    let icon_size = if let (Some(w), Some(h)) = (
+                        self.theme.get_px_value("settings-button", "width"),
+                        self.theme.get_px_value("settings-button", "height")
+                    ) {
+                        egui::vec2(w, h)
+                    } else {
+                        egui::vec2(18.0, 18.0)
+                    };
                     let (icon_rect, icon_resp) = ui.allocate_exact_size(icon_size, egui::Sense::click());
                     if icon_resp.clicked() && self.editing.is_none() {
                         settings_clicked = true;
@@ -564,25 +480,24 @@ impl EframeWrapper {
                             );
                         }
                         let gear = "⚙";
-                        let gear_color = if icon_resp.hovered() {
-                            self.theme.get_style("settings-button", "hover-color")
-                                .and_then(|s| self.theme.parse_color(&s))
-                                .unwrap_or(egui::Color32::from_rgb(64, 64, 64))
+                        let gear_color = self.theme.get_text_color("settings-button", icon_resp.hovered())
+                            .unwrap_or(egui::Color32::from_rgb(64, 64, 64));
+                        let gear_font = if let Some(font_size_str) = self.theme.get_style("settings-button", "font-size") {
+                            let mut text = egui::TextStyle::Button.resolve(ui.style());
+                            if let Ok(font_size) = font_size_str.replace("px", "").parse::<f32>() {
+                                text.size = font_size;
+                            }
+                            text
                         } else {
-                            self.theme.get_style("settings-button", "text-color")
-                                .and_then(|s| self.theme.parse_color(&s))
-                                .unwrap_or(egui::Color32::from_rgb(64, 64, 64))
+                            egui::TextStyle::Button.resolve(ui.style())
                         };
-                        if let Some(hitbox_color) = self.theme.get_combined_style(&["settings-button"], "hitbox-color")
-                            .and_then(|s| self.theme.parse_color(&s)) {
-                            ui.painter().rect_filled(icon_rect, 0.0, hitbox_color);
-                        }
-                        let gear_font = egui::TextStyle::Button.resolve(ui.style());
                         let center_align = egui::Align2([egui::Align::Center, egui::Align::Center]);
                         let gear_size = ui.fonts(|f| f.layout_no_wrap(gear.to_owned(), gear_font.clone(), gear_color).size());
+                        let x_offset = self.theme.get_px_value("settings-button", "x-offset").unwrap_or(0.0);
+                        let y_offset = self.theme.get_px_value("settings-button", "y-offset").unwrap_or(0.0);
                         let gear_pos = egui::pos2(
-                            icon_rect.center().x - gear_size.x / 2.0,
-                            icon_rect.center().y - gear_size.y / 2.0
+                            icon_rect.center().x - gear_size.x / 2.0 + x_offset,
+                            icon_rect.center().y - gear_size.y / 2.0 + y_offset
                         );
                         ui.painter().text(gear_pos, center_align, gear, gear_font, gear_color);
                     }
@@ -597,7 +512,7 @@ impl EframeWrapper {
                         with_custom_style(ui, |s| {
                             self.theme.apply_combined_widget_style(s, &["app-item", "app-button"]);
                         }, |ui| {
-                            if ui.button(&app_name).clicked() {
+                            if custom_button(ui, &app_name, "app-button", &self.theme).clicked() {
                                 self.app.launch_app(&app_name);
                             }
                         });
@@ -622,7 +537,7 @@ impl EframeWrapper {
             }, |ui| {
                 ui.horizontal(|ui| {
                     for &(label, cmd) in &[("Power", "P"), ("Restart", "R"), ("Logout", "L")] {
-                        if ui.button(label).clicked() {
+                        if custom_button(ui, label, "power-button", &self.theme).clicked() {
                             self.app.handle_input(cmd);
                         }
                     }
@@ -667,30 +582,14 @@ impl eframe::App for EframeWrapper {
                 secs.sort_by_key(|sec| self.theme.get_order(sec));
 
                 for sec in secs {
-                    if sec == "app-list" {
-                        let x = self.theme.get_px_value("app-list", "x").unwrap_or(0.0);
-                        let y = self.theme.get_px_value("app-list", "y").unwrap_or(0.0);
-                        let (w, h) = self.theme.get_app_list_size();
-                        egui::Area::new("app-list".to_owned().into())
-                            .order(egui::Order::Foreground)
-                            .anchor(egui::Align2::LEFT_TOP, egui::vec2(x, y))
-                            .show(ctx, |ui| {
-                                ui.allocate_ui(egui::vec2(w, h), |ui| {
-                                    self.render_section(ui, sec, ctx);
-                                });
-                            });
-                    } else if let (Some(x), Some(y)) = (
+                    if let (Some(x), Some(y)) = (
                         self.theme.get_px_value(sec, "x"),
                         self.theme.get_px_value(sec, "y")
                     ) {
-                        let w = self.theme.get_px_value(sec, "width");
-                        let h = self.theme.get_px_value(sec, "height");
                         egui::Area::new(sec.to_owned().into())
                             .order(egui::Order::Foreground)
                             .fixed_pos(egui::pos2(x, y))
                             .show(ctx, |ui| {
-                                if let Some(w) = w { ui.set_width(w); }
-                                if let Some(h) = h { ui.set_height(h); }
                                 self.render_section(ui, sec, ctx);
                             });
                     } else {
@@ -699,14 +598,11 @@ impl eframe::App for EframeWrapper {
                 }
             });
 
-        // If the env-input window is open, display it.
         if let Some((ref mut app_name, ref mut opts)) = self.editing {
-            let width = self.theme.get_px_value("env-window", "width").unwrap_or(300.0);
-            let height = self.theme.get_px_value("env-window", "height").unwrap_or(200.0);
             let x = self.theme.get_px_value("env-window", "x")
-                .unwrap_or((ctx.input(|i| i.screen_rect().width()) - width) / 2.0);
+                .unwrap_or((ctx.input(|i| i.screen_rect().width()) - 300.0) / 2.0);
             let y = self.theme.get_px_value("env-window", "y")
-                .unwrap_or((ctx.input(|i| i.screen_rect().height()) - height) / 2.0);
+                .unwrap_or((ctx.input(|i| i.screen_rect().height()) - 200.0) / 2.0);
             let env_input_bg = self.theme.get_style("env-input", "background-color")
                 .and_then(|s| self.theme.parse_color(&s))
                 .unwrap_or(egui::Color32::TRANSPARENT);
@@ -717,8 +613,6 @@ impl eframe::App for EframeWrapper {
                 .movable(true)
                 .default_pos(egui::pos2(x, y))
                 .show(ctx, |ui| {
-                    ui.set_width(width);
-                    ui.set_height(height);
                     egui::Frame::NONE.fill(env_input_bg).show(ui, |ui| {
                         ui.vertical(|ui| {
                             ui.label(format!("Environment Variables for {}", app_name));
@@ -732,10 +626,12 @@ impl eframe::App for EframeWrapper {
                             });
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
-                                with_custom_style(ui, |s| { self.theme.apply_widget_style(s, "edit-button"); }, |ui| {
-                                    if ui.button("Save").clicked() { save = true; }
-                                    if ui.button("Cancel").clicked() { cancel = true; }
-                                });
+                                if custom_button(ui, "Save", "edit-button", &self.theme).clicked() {
+                                    save = true;
+                                }
+                                if custom_button(ui, "Cancel", "edit-button", &self.theme).clicked() {
+                                    cancel = true;
+                                }
                             });
                         });
                     });
@@ -749,11 +645,9 @@ impl eframe::App for EframeWrapper {
             }
         }
 
-        // Handle Esc/Enter keys.
         let esc_pressed = ctx.input(|i| i.key_pressed(egui::Key::Escape));
         let enter_pressed = ctx.input(|i| i.key_pressed(egui::Key::Enter));
         if esc_pressed && self.editing.is_some() {
-            // If env-input window is open, close it.
             self.editing = None;
         } else if esc_pressed {
             self.app.handle_input("ESC");

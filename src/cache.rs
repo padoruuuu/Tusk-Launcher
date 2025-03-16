@@ -13,8 +13,7 @@ use eframe::egui;
 use image;
 use resvg::{
     tiny_skia::Pixmap,
-    Tree,
-    usvg::{self, TreeParsing, TreeTextToPath},
+    usvg::{self},
 };
 
 use crate::{app_launcher::AppLaunchOptions, config::Config};
@@ -87,12 +86,14 @@ impl IconManager {
     fn load_image(path: &str) -> Result<egui::ColorImage, Box<dyn std::error::Error>> {
         if path.to_lowercase().ends_with(".svg") {
             let data = fs::read(path)?;
-            let mut tree = usvg::Tree::from_data(&data, &usvg::Options::default())?;
-            tree.convert_text(&usvg::fontdb::Database::new());
-            let size = tree.size.to_int_size();
+            let opt = usvg::Options::default();
+            
+            // Create the SVG tree from data
+            let tree = usvg::Tree::from_data(&data, &opt)?;
+            let size = tree.size().to_int_size();
             let mut pixmap =
                 Pixmap::new(size.width(), size.height()).ok_or("Failed to create pixmap")?;
-            Tree::from_usvg(&tree).render(usvg::Transform::default(), &mut pixmap.as_mut());
+            resvg::render(&tree, usvg::Transform::default(), &mut pixmap.as_mut());
             Ok(egui::ColorImage::from_rgba_unmultiplied(
                 [size.width() as usize, size.height() as usize],
                 pixmap.data(),
