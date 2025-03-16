@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-serde = { version = "1.0.197", features = ["derive"] }
+serde = { version = "1.0.219", features = ["derive"] }
 chrono = "0.4.40"
 once_cell = "1.19.0"
 xdg = "2.5.2"
@@ -13,5 +13,4 @@ eframe = "0.31.1"
 rayon = "1.10.0"
 toml = "0.8.10"
 image = "0.24"
-resvg = { version = "0.36", features = ["default"] }
-usvg = "0.36"
+resvg = { version = "0.45.0", features = ["default"] }
