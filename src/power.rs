@@ -1,6 +1,6 @@
 use std::process::Command;
 use std::env;
-use crate::config::Config;
+use crate::gui::Config;
 
 fn try_command(command_str: &str) -> bool {
     // Replace $XDG_SESSION_ID with actual session ID if present

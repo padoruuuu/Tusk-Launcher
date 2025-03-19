@@ -1,5 +1,5 @@
 use chrono::Local;
-use crate::config::{Config, format_datetime};
+use crate::gui::{Config, format_datetime};
 
 pub fn get_current_time(config: &Config) -> String {
     format_datetime(&Local::now(), config)
@@ -8,7 +8,7 @@ pub fn get_current_time(config: &Config) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Config, TimeOrder};
+    use crate::gui::{Config, TimeOrder, format_datetime};
 
     #[test]
     fn test_get_current_time() {

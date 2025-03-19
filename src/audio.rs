@@ -4,7 +4,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use crate::config::Config;
+use crate::gui::Config;
 
 pub struct AudioController {
     volume: Arc<Mutex<f32>>,
@@ -28,9 +28,8 @@ impl AudioController {
     }
 
     fn get_current_volume() -> Result<f32, Box<dyn Error>> {
-        // Get the list of currently playing audio streams
-        Command::new("pw-dump")
-            .output()?;
+        // Get the list of currently playing audio streams (not used directly)
+        Command::new("pw-dump").output()?;
         
         // For now, we'll just get the default sink volume
         let output = Command::new("wpctl")
@@ -54,12 +53,11 @@ impl AudioController {
 
         let clamped_volume = new_volume.clamp(0.0, self.max_volume);
         
-        // Get all active audio streams
-        let output = Command::new("pw-dump")
-            .output()?;
+        // Get all active audio streams (for demonstration, we just call pw-dump)
+        let output = Command::new("pw-dump").output()?;
         
         if output.status.success() {
-            // For each active stream, set its volume
+            // Set the default sink volume
             Command::new("wpctl")
                 .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{:.2}", clamped_volume)])
                 .output()?;

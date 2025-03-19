@@ -3,7 +3,6 @@ mod power;
 mod cache;
 mod app_launcher;
 mod gui;
-mod config;
 mod audio;
 
 use std::fs::{self, File, OpenOptions};
@@ -11,24 +10,22 @@ use std::io::{self, Write, ErrorKind};
 use std::os::unix::fs::OpenOptionsExt;
 use std::process::{self, Command, Stdio};
 
-use crate::gui::EframeGui;
-use crate::config::load_config;
+use crate::gui::{EframeGui, load_theme}; // load_theme() is a public function re-exporting Theme::load_or_create()
 use crate::clock::get_current_time;
 
 const PID_FILE_PATH: &str = "/tmp/tusk-launcher.pid";
 
-#[allow(dead_code)] // `file` is used in `Drop` for cleanup
+#[allow(dead_code)]
 struct PidFileGuard {
     file: File,
 }
 
 impl Drop for PidFileGuard {
     fn drop(&mut self) {
-        let _ = fs::remove_file(PID_FILE_PATH); // Fast cleanup on exit
+        let _ = fs::remove_file(PID_FILE_PATH);
     }
 }
 
-/// Check if a process exists using `kill -0`.
 fn process_exists(pid: u32) -> bool {
     Command::new("kill")
         .args(&["-0", &pid.to_string()])
@@ -39,7 +36,6 @@ fn process_exists(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
-/// Get the PID if the process is running, else clean up and return None.
 fn get_running_pid() -> io::Result<Option<u32>> {
     match fs::read_to_string(PID_FILE_PATH) {
         Ok(content) => match content.trim().parse::<u32>() {
@@ -47,12 +43,12 @@ fn get_running_pid() -> io::Result<Option<u32>> {
                 if process_exists(pid) {
                     Ok(Some(pid))
                 } else {
-                    let _ = fs::remove_file(PID_FILE_PATH); // Remove stale PID file
+                    let _ = fs::remove_file(PID_FILE_PATH);
                     Ok(None)
                 }
             }
             Err(_) => {
-                let _ = fs::remove_file(PID_FILE_PATH); // Remove invalid PID file
+                let _ = fs::remove_file(PID_FILE_PATH);
                 Ok(None)
             }
         },
@@ -61,7 +57,6 @@ fn get_running_pid() -> io::Result<Option<u32>> {
     }
 }
 
-/// Acquire PID lock, removing stale files and retrying on race conditions.
 fn acquire_pid_lock() -> io::Result<PidFileGuard> {
     loop {
         match get_running_pid()? {
@@ -78,11 +73,10 @@ fn acquire_pid_lock() -> io::Result<PidFileGuard> {
                     return Ok(PidFileGuard { file });
                 }
                 Err(e) if e.kind() == ErrorKind::AlreadyExists => {
-                    // Race condition: another process wrote the file; check again
                     if let Some(_) = get_running_pid()? {
                         return Err(io::Error::new(ErrorKind::WouldBlock, "Instance running"));
                     }
-                    let _ = fs::remove_file(PID_FILE_PATH); // Force remove if stale
+                    let _ = fs::remove_file(PID_FILE_PATH);
                     continue;
                 }
                 Err(e) => return Err(e),
@@ -91,7 +85,6 @@ fn acquire_pid_lock() -> io::Result<PidFileGuard> {
     }
 }
 
-/// Send SIGUSR1 to focus an existing instance.
 fn send_focus_signal(pid: u32) -> io::Result<()> {
     let status = Command::new("kill")
         .args(&["-SIGUSR1", &pid.to_string()])
@@ -129,7 +122,10 @@ fn main() {
 
     let _pid_guard = pid_guard;
 
-    let config = load_config();
+    // Load the theme (which now includes both theme rules and configuration)
+    // load_theme() is a public function exported from the gui module.
+    let theme = load_theme().expect("Failed to load theme");
+    let config = theme.get_config();
     println!("Current time: {}", get_current_time(&config));
 
     let app = Box::new(app_launcher::AppLauncher::default());

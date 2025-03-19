@@ -4,15 +4,16 @@ use std::{
     path::PathBuf,
     process::{Command, Stdio},
 };
+
 use xdg::BaseDirectories;
 use rayon::prelude::*;
 use serde::{Serialize, Deserialize};
+
 use crate::{
-    config::Config,
     cache::{update_recent_apps, get_launch_options, update_launch_options, resolve_icon_path},
+    gui::AppInterface,
 };
-use crate::gui::AppInterface;
-use crate::config::{load_config, get_current_time_in_timezone};
+use crate::clock::get_current_time;
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct AppLaunchOptions {
@@ -89,21 +90,15 @@ fn launch_app(
     let home_dir = std::env::var("HOME").map(PathBuf::from).map_err(|_| "No home directory")?;
     
     let (cmd, dir) = if let Some(opts) = options {
-        let command = match &opts.custom_command {
-            Some(custom_cmd) if custom_cmd.contains("%command%") => {
-                // Replace %command% with the original exec_cmd at launch time
+        let command = if let Some(custom_cmd) = &opts.custom_command {
+            if custom_cmd.contains("%command%") {
                 custom_cmd.replace("%command%", exec_cmd)
-            },
-            Some(custom_cmd) => {
-                // No %command% placeholder, use as a prefix to the original command
+            } else {
                 format!("{} {}", custom_cmd, exec_cmd)
-            },
-            None => {
-                // No custom command defined, use original
-                exec_cmd.to_string()
             }
+        } else {
+            exec_cmd.to_string()
         };
-        
         (
             command,
             opts.working_directory.as_deref().unwrap_or_else(|| home_dir.to_str().unwrap_or("")),
@@ -112,11 +107,9 @@ fn launch_app(
         (exec_cmd.to_string(), home_dir.to_str().unwrap_or(""))
     };
     
-    // Create a command that includes environment variables if present
     let mut command = Command::new("sh");
     command.arg("-c").arg(&cmd).current_dir(dir);
     
-    // Add environment variables if specified
     if let Some(opts) = options {
         for (key, value) in &opts.environment_vars {
             command.env(key, value);
@@ -136,13 +129,13 @@ pub struct AppLauncher {
     applications: Vec<(String, String, String)>,
     results: Vec<(String, String, String)>,
     quit: bool,
-    config: Config,
+    config: crate::gui::Config,
     launch_options: HashMap<String, AppLaunchOptions>,
 }
 
 impl Default for AppLauncher {
     fn default() -> Self {
-        let config = load_config();
+        let config = crate::gui::Config::default();
         let applications = get_desktop_entries();
         let launch_options = get_launch_options();
         let results = if config.enable_recent_apps {
@@ -230,11 +223,7 @@ impl AppInterface for AppLauncher {
     }
 
     fn get_time(&self) -> String {
-        get_current_time_in_timezone(&self.config)
-    }
-
-    fn get_config(&self) -> &Config {
-        &self.config
+        get_current_time(&self.config)
     }
 
     fn launch_app(&mut self, app_name: &str) {
@@ -246,19 +235,13 @@ impl AppInterface for AppLauncher {
         }
     }
 
-    fn start_launch_options_edit(&mut self, app_name: &str) -> String {
-        self.get_formatted_launch_options(app_name)
-    }
-
-    fn get_launch_options(&self, app_name: &str) -> Option<&AppLaunchOptions> {
-        self.launch_options.get(app_name)
-    }
-
     fn get_icon_path(&self, app_name: &str) -> Option<String> {
         self.results
             .iter()
             .find(|(name, _, _)| name == app_name)
-            .and_then(|(_, _, icon)| resolve_icon_path(icon, &self.config))
+            .and_then(|(_, _, icon)| {
+                crate::cache::resolve_icon_path(icon, &self.config)
+            })
     }
 }
 
@@ -270,22 +253,6 @@ impl AppLauncher {
                 self.quit = true;
             }
         }
-    }
-
-    fn get_formatted_launch_options(&self, app_name: &str) -> String {
-        self.launch_options.get(app_name).map(|opts| {
-            let mut result = String::new();
-            for (k, v) in &opts.environment_vars {
-                result.push_str(&format!("-e {}={} ", k, v));
-            }
-            if let Some(cmd) = &opts.custom_command {
-                result.push_str(cmd);
-            }
-            if let Some(dir) = &opts.working_directory {
-                result.push_str(&format!(" -w {}", dir));
-            }
-            result
-        }).unwrap_or_default()
     }
 
     fn get_app_command(&self, app_name: &str) -> Option<String> {
@@ -316,7 +283,6 @@ fn parse_launch_options_input(input: &str, _original_command: Option<String>) ->
                 }
             }
             _ => {
-                // If we encounter something that's not a flag, we're starting the command part
                 command_parts.push(part.to_string());
                 command_parts.extend(parts.map(|s| s.to_string()));
                 break;
@@ -324,14 +290,12 @@ fn parse_launch_options_input(input: &str, _original_command: Option<String>) ->
         }
     }
 
-    // Join command parts with spaces
     let input_command = if !command_parts.is_empty() {
         command_parts.join(" ")
     } else {
         String::new()
     };
 
-    // Set the custom command only if user provided one
     if !input_command.is_empty() {
         options.custom_command = Some(input_command);
     }

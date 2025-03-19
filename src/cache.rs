@@ -13,13 +13,13 @@ use eframe::egui;
 use image;
 use resvg::{
     tiny_skia::Pixmap,
-    usvg::{self},
+    usvg,
 };
 
-use crate::{app_launcher::AppLaunchOptions, config::Config};
+use crate::{app_launcher::AppLaunchOptions, gui::Config};
 use xdg::BaseDirectories;
 
-// Create CACHE_FILE using the XDG BaseDirectories API in place of dirs::config_dir().
+// Create CACHE_FILE using the XDG BaseDirectories API.
 static CACHE_FILE: Lazy<PathBuf> = Lazy::new(|| {
     let config_home = BaseDirectories::new()
         .map(|bd| bd.get_config_home().to_owned())
@@ -57,14 +57,22 @@ pub struct IconManager {
 
 impl IconManager {
     pub fn new() -> Self {
-        Self { icon_textures: HashMap::new() }
+        Self {
+            icon_textures: HashMap::new(),
+        }
     }
 
-    pub fn get_texture(&mut self, ctx: &egui::Context, icon_path: &str) -> Option<egui::TextureHandle> {
-        // If we don't have the texture or the file was modified, reload.
+    pub fn get_texture(
+        &mut self,
+        ctx: &egui::Context,
+        icon_path: &str,
+    ) -> Option<egui::TextureHandle> {
+        // Reload if texture is missing or file has been modified.
         let reload = self.icon_textures.get(icon_path).map_or(true, |cache| {
             fs::metadata(icon_path)
-                .and_then(|m| m.modified().map(|mod_time| cache.last_modified.map_or(true, |lm| lm != mod_time)))
+                .and_then(|m| m.modified().map(|mod_time| {
+                    cache.last_modified.map_or(true, |lm| lm != mod_time)
+                }))
                 .unwrap_or(true)
         });
         if reload {
@@ -79,7 +87,9 @@ impl IconManager {
             );
             Some(tex)
         } else {
-            self.icon_textures.get(icon_path).and_then(|cache| cache.texture.clone())
+            self.icon_textures
+                .get(icon_path)
+                .and_then(|cache| cache.texture.clone())
         }
     }
 
@@ -87,8 +97,6 @@ impl IconManager {
         if path.to_lowercase().ends_with(".svg") {
             let data = fs::read(path)?;
             let opt = usvg::Options::default();
-            
-            // Create the SVG tree from data
             let tree = usvg::Tree::from_data(&data, &opt)?;
             let size = tree.size().to_int_size();
             let mut pixmap =
@@ -174,7 +182,6 @@ pub fn resolve_icon_path(icon_name: &str, config: &Config) -> Option<String> {
 
     let icon_sizes = ["512x512", "256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "16x16", "scalable"];
     let categories = ["apps", "devices", "places", "mimetypes", "status", "actions"];
-    // Replace dirs::data_local_dir() with xdg's get_data_home()
     let user_flatpak_base = BaseDirectories::new()
         .map(|bd| bd.get_data_home().to_owned())
         .unwrap_or_else(|_| PathBuf::from(".local/share"))
