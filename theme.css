@@ -32,19 +32,6 @@
     padding: 1px;
 }
 
-/* App Item */
-.app-item {
-    x: 162px;
-    y: 40px;
-    width: 10px;
-    height: 10px;
-    background-color: rgba(122, 162, 247, 1);
-    hover-background-color: rgba(102, 138, 196, 1);
-    text-color: rgba(236, 239, 244, 1);
-    hover-text-color: rgba(236, 239, 244, 1);
-    border-radius: 0px;
-    padding: 3px;
-}
 
 /* App Button (used with custom_button for launching apps) */
 .app-button {
@@ -114,7 +101,7 @@
     padding: 6px;
     font-size: 12px;
     border-radius: 4px;
-    width: 200px;
+    width: 100px;
     height: 50px;
 }
 
@@ -122,7 +109,7 @@
 .settings-button {
     width: 22px;
     height: 22px;
-    hover-text-color: rgba(102, 138, 196, 1);
+    hover-text-color: rgba(102, 138, 196, 0.5);
     text-color: rgba(122, 162, 247, 1);
     font-size: 16px;
     x-offset: -3px;
@@ -132,7 +119,7 @@
 
 .config {
     enable_recent_apps: true;
-    max_search_results: 5;
+    max_search_results: 3;
     enable_power_options: true;
     show_time: true;
     time_format: "%I:%M %p";
