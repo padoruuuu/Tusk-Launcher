@@ -12,15 +12,128 @@ use eframe;
 use serde::{Deserialize, Serialize};
 use xdg;
 
-const DEFAULT_THEME: &str = r#"
-/* Default theme and config file */
+const DEFAULT_THEME: &str = r#"/* Centered Streamlined Compact Theme with Absolute Positioning */
 
-/* --- Config section ---
-   Override default configuration by changing these values.
-*/
+/* Main Window */
+.main-window {
+    background-color: rgba(0, 0, 0, 0.9);
+    width: 300px;
+    height: 200px;
+}
+
+/* Search Bar */
+.search-bar {
+    x: 60px;
+    y: 10px;
+    width: 150px;
+    height: 25px;
+    background-color: rgba(59, 66, 82, 1);
+    hover-background-color: rgba(76, 86, 106, 1);
+    border-radius: 6px;
+    text-color: rgba(236, 239, 244, 1);
+    hover-text-color: rgba(236, 239, 244, 1);
+    padding: 4px;
+    font-size: 12px;
+}
+
+/* App List */
+.app-list {
+    x: 62px;
+    y: 40px;
+    width: 109px;
+    height: 108px;
+    background-color: rgba(46, 52, 64, 1);
+    padding: 1px;
+}
+
+
+/* App Button (used with custom_button for launching apps) */
+.app-button {
+    background-color: rgba(122, 162, 247, 1);
+    hover-background-color: rgba(102, 138, 196, 1);
+    text-color: rgba(236, 239, 244, 1);
+    hover-text-color: rgba(236, 239, 244, 1);
+    border-radius: 4px;
+    padding: 3px;
+    font-size: 14px;
+}
+
+/* Time Display */
+.time-display {
+    x: 72px;
+    y: 140px;
+    width: 200px;
+    height: 50px;
+    background-color: rgba(46, 52, 64, 1);
+    text-color: rgba(236, 239, 244, 1);
+    hover-text-color: rgba(236, 239, 244, 1);
+    text-align: center;
+}
+
+/* Volume Slider */
+.volume-slider {
+    x: 40px;
+    y: 155px;
+    width: 200px;
+    height: 50px;
+    background-color: rgba(46, 52, 64, 1);
+    hover-background-color: rgba(67, 76, 94, 1);
+    text-color: rgba(236, 239, 244, 1);
+    hover-text-color: rgba(236, 239, 244, 1);
+    border-radius: 4px;
+}
+
+/* Power Button (used with custom_button for power options) */
+.power-button {
+    x: 60px;
+    y: 190px;
+    width: 65px;
+    height: 15px;
+    background-color: rgba(122, 162, 247, 1);
+    hover-background-color: rgba(102, 138, 196, 1);
+    text-color: rgba(236, 239, 244, 1);
+    hover-text-color: rgba(236, 239, 244, 1);
+    border-radius: 4px;
+}
+
+/* Edit Button (used with custom_button for Save/Cancel in env window) */
+.edit-button {
+    background-color: rgba(122, 162, 247, 1);
+    hover-background-color: rgba(102, 138, 196, 1);
+    text-color: rgba(236, 239, 244, 1);
+    hover-text-color: rgba(236, 239, 244, 1);
+    border-radius: 4px;
+    padding: 3px;
+    font-size: 12px;
+}
+
+/* Environment Variable Input Window */
+.env-input {
+    background-color: rgba(59, 66, 82, 1);
+    text-color: rgba(236, 239, 244, 1);
+    hover-text-color: rgba(236, 239, 244, 1);
+    padding: 6px;
+    font-size: 12px;
+    border-radius: 4px;
+    width: 100px;
+    height: 50px;
+}
+
+/* Settings Button */
+.settings-button {
+    width: 22px;
+    height: 22px;
+    hover-text-color: rgba(102, 138, 196, 0.5);
+    text-color: rgba(122, 162, 247, 1);
+    font-size: 16px;
+    x-offset: -3px;
+    y-offset: 0px;
+}
+
+
 .config {
-    enable_recent_apps: false;
-    max_search_results: 2;
+    enable_recent_apps: true;
+    max_search_results: 3;
     enable_power_options: true;
     show_time: true;
     time_format: "%I:%M %p";
@@ -33,31 +146,6 @@ const DEFAULT_THEME: &str = r#"
     logout_commands: loginctl terminate-session $XDG_SESSION_ID, hyprctl dispatch exit, swaymsg exit, gnome-session-quit --logout --no-prompt, qdbus org.kde.ksmserver /KSMServer logout 0 0 0;
     enable_icons: true;
     icon_cache_dir: "/home/zeakz/.config/tusk-launcher/icons";
-}
-
-/* --- Theme rules --- */
-.search-bar {
-    background-color: #222222;
-    text-color: #FFFFFF;
-    padding: 4px;
-    border-radius: 6px;
-    font-size: 14px;
-}
-
-.volume-slider {
-    background-color: #333333;
-    text-color: #FFFFFF;
-    padding: 2px;
-    border-radius: 4px;
-    font-size: 12px;
-}
-
-.app-button {
-    background-color: #444444;
-    text-color: #FFFFFF;
-    padding: 6px;
-    border-radius: 4px;
-    font-size: 12px;
 }
 "#;
 
