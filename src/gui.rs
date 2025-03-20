@@ -12,128 +12,15 @@ use eframe;
 use serde::{Deserialize, Serialize};
 use xdg;
 
-const DEFAULT_THEME: &str = r#"/* Centered Streamlined Compact Theme with Absolute Positioning */
+const DEFAULT_THEME: &str = r#"
+/* Default theme and config file */
 
-/* Main Window */
-.main-window {
-    background-color: rgba(0, 0, 0, 0.9);
-    width: 300px;
-    height: 200px;
-}
-
-/* Search Bar */
-.search-bar {
-    x: 60px;
-    y: 10px;
-    width: 150px;
-    height: 25px;
-    background-color: rgba(59, 66, 82, 1);
-    hover-background-color: rgba(76, 86, 106, 1);
-    border-radius: 6px;
-    text-color: rgba(236, 239, 244, 1);
-    hover-text-color: rgba(236, 239, 244, 1);
-    padding: 4px;
-    font-size: 12px;
-}
-
-/* App List */
-.app-list {
-    x: 62px;
-    y: 40px;
-    width: 109px;
-    height: 108px;
-    background-color: rgba(46, 52, 64, 1);
-    padding: 1px;
-}
-
-
-/* App Button (used with custom_button for launching apps) */
-.app-button {
-    background-color: rgba(122, 162, 247, 1);
-    hover-background-color: rgba(102, 138, 196, 1);
-    text-color: rgba(236, 239, 244, 1);
-    hover-text-color: rgba(236, 239, 244, 1);
-    border-radius: 4px;
-    padding: 3px;
-    font-size: 14px;
-}
-
-/* Time Display */
-.time-display {
-    x: 72px;
-    y: 140px;
-    width: 200px;
-    height: 50px;
-    background-color: rgba(46, 52, 64, 1);
-    text-color: rgba(236, 239, 244, 1);
-    hover-text-color: rgba(236, 239, 244, 1);
-    text-align: center;
-}
-
-/* Volume Slider */
-.volume-slider {
-    x: 40px;
-    y: 155px;
-    width: 200px;
-    height: 50px;
-    background-color: rgba(46, 52, 64, 1);
-    hover-background-color: rgba(67, 76, 94, 1);
-    text-color: rgba(236, 239, 244, 1);
-    hover-text-color: rgba(236, 239, 244, 1);
-    border-radius: 4px;
-}
-
-/* Power Button (used with custom_button for power options) */
-.power-button {
-    x: 60px;
-    y: 190px;
-    width: 65px;
-    height: 15px;
-    background-color: rgba(122, 162, 247, 1);
-    hover-background-color: rgba(102, 138, 196, 1);
-    text-color: rgba(236, 239, 244, 1);
-    hover-text-color: rgba(236, 239, 244, 1);
-    border-radius: 4px;
-}
-
-/* Edit Button (used with custom_button for Save/Cancel in env window) */
-.edit-button {
-    background-color: rgba(122, 162, 247, 1);
-    hover-background-color: rgba(102, 138, 196, 1);
-    text-color: rgba(236, 239, 244, 1);
-    hover-text-color: rgba(236, 239, 244, 1);
-    border-radius: 4px;
-    padding: 3px;
-    font-size: 12px;
-}
-
-/* Environment Variable Input Window */
-.env-input {
-    background-color: rgba(59, 66, 82, 1);
-    text-color: rgba(236, 239, 244, 1);
-    hover-text-color: rgba(236, 239, 244, 1);
-    padding: 6px;
-    font-size: 12px;
-    border-radius: 4px;
-    width: 200px;
-    height: 50px;
-}
-
-/* Settings Button */
-.settings-button {
-    width: 22px;
-    height: 22px;
-    hover-text-color: rgba(102, 138, 196, 0.5);
-    text-color: rgba(122, 162, 247, 1);
-    font-size: 16px;
-    x-offset: -3px;
-    y-offset: 0px;
-}
-
-
+/* --- Config section ---
+   Override default configuration by changing these values.
+*/
 .config {
     enable_recent_apps: false;
-    max_search_results: 5;
+    max_search_results: 2;
     enable_power_options: true;
     show_time: true;
     time_format: "%I:%M %p";
@@ -146,7 +33,33 @@ const DEFAULT_THEME: &str = r#"/* Centered Streamlined Compact Theme with Absolu
     logout_commands: loginctl terminate-session $XDG_SESSION_ID, hyprctl dispatch exit, swaymsg exit, gnome-session-quit --logout --no-prompt, qdbus org.kde.ksmserver /KSMServer logout 0 0 0;
     enable_icons: true;
     icon_cache_dir: "/home/zeakz/.config/tusk-launcher/icons";
-}"#;
+}
+
+/* --- Theme rules --- */
+.search-bar {
+    background-color: #222222;
+    text-color: #FFFFFF;
+    padding: 4px;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+.volume-slider {
+    background-color: #333333;
+    text-color: #FFFFFF;
+    padding: 2px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+.app-button {
+    background-color: #444444;
+    text-color: #FFFFFF;
+    padding: 6px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+"#;
 
 /// Remove C-style comments (/* ... */) from the CSS.
 fn remove_comments(css: &str) -> String {
@@ -159,13 +72,11 @@ fn remove_comments(css: &str) -> String {
                 chars.next();
                 in_comment = false;
             }
+        } else if c == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            in_comment = true;
         } else {
-            if c == '/' && chars.peek() == Some(&'*') {
-                chars.next();
-                in_comment = true;
-            } else {
-                out.push(c);
-            }
+            out.push(c);
         }
     }
     out
@@ -290,12 +201,8 @@ impl Theme {
                     let props = block.split(';')
                         .filter_map(|decl| {
                             let decl = decl.trim();
-                            if decl.is_empty() {
-                                None
-                            } else {
-                                decl.split_once(':')
-                                    .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
-                            }
+                            if decl.is_empty() { None }
+                            else { decl.split_once(':').map(|(k, v)| (k.trim().to_string(), v.trim().to_string())) }
                         })
                         .collect();
                     rules.push(Rule { class_name, props });
@@ -308,7 +215,7 @@ impl Theme {
 
     fn get_style(&self, class: &str, prop: &str) -> Option<String> {
         self.rules.iter()
-            .find(|r| r.class_name == class)
+            .find(|r| r.class_name.trim().to_lowercase() == class.trim().to_lowercase())
             .and_then(|r| r.props.get(prop).cloned())
     }
 
@@ -351,7 +258,7 @@ impl Theme {
 
     pub fn get_config(&self) -> Config {
         let mut config = Config::default();
-        if let Some(rule) = self.rules.iter().find(|r| r.class_name == "config") {
+        if let Some(rule) = self.rules.iter().find(|r| r.class_name.trim().to_lowercase() == "config") {
             if let Some(val) = rule.props.get("enable_recent_apps") {
                 if let Ok(b) = val.parse::<bool>() { config.enable_recent_apps = b; }
             }
@@ -453,15 +360,13 @@ impl Theme {
     }
 
     fn apply_widget_style(&self, style: &mut eframe::egui::Style, class: &str) {
-        if let Some(bg) = self.get_style(class, "background-color")
-            .and_then(|s| self.parse_color(&s)) {
+        if let Some(bg) = self.get_style(class, "background-color").and_then(|s| self.parse_color(&s)) {
             let hover = self.get_style(class, "hover-background-color")
                 .and_then(|s| self.parse_color(&s))
                 .unwrap_or(bg);
             set_widget_bg(style, bg, hover);
         }
-        if let Some(tc) = self.get_style(class, "text-color")
-            .and_then(|s| self.parse_color(&s)) {
+        if let Some(tc) = self.get_style(class, "text-color").and_then(|s| self.parse_color(&s)) {
             style.visuals.override_text_color = Some(tc);
         }
     }
@@ -493,7 +398,7 @@ impl Theme {
     }
 }
 
-/// Helper to set common widget background properties.
+/// Helper to set widget background properties.
 fn set_widget_bg(style: &mut eframe::egui::Style, base: eframe::egui::Color32, hover: eframe::egui::Color32) {
     let transparent = eframe::egui::Color32::TRANSPARENT;
     let widgets = &mut style.visuals.widgets;
@@ -585,15 +490,10 @@ pub trait AppInterface {
     fn should_quit(&self) -> bool;
     fn get_query(&self) -> String;
     fn get_search_results(&self) -> Vec<String>;
-
-    // NEW: Return recent apps; default implementation falls back to get_search_results
-    fn get_recent_apps(&self) -> Vec<String> {
-        self.get_search_results()
-    }
-
     fn get_time(&self) -> String;
     fn launch_app(&mut self, app_name: &str);
     fn get_icon_path(&self, app_name: &str) -> Option<String>;
+    fn get_formatted_launch_options(&self, app_name: &str) -> String;
 }
 
 pub struct EframeGui;
@@ -614,7 +514,6 @@ impl EframeGui {
             ..Default::default()
         };
 
-        // Load the theme (which now includes config)
         let theme = Theme::load_or_create()?;
         let cfg = theme.get_config();
         let audio = crate::audio::AudioController::new(&cfg)?;
@@ -726,16 +625,21 @@ impl EframeWrapper {
 
     fn render_app_list(&mut self, ui: &mut eframe::egui::Ui, ctx: &eframe::egui::Context) {
         self.theme.apply_style(ui, "app-list");
-        ui.vertical(|ui| {
-            let cfg = self.theme.get_config();
-            // Use recent apps if enabled and query is empty, otherwise use search results.
-            let results: Vec<String> = if cfg.enable_recent_apps && self.app.get_query().trim().is_empty() {
-                self.app.get_recent_apps()
-            } else {
+        // Filter search results based on config:
+        let query = self.app.get_query();
+        let cfg = self.theme.get_config();
+        let filtered: Vec<String> = if query.trim().is_empty() {
+            if cfg.enable_recent_apps {
                 self.app.get_search_results()
-            };
-            // Limit the number of displayed apps to max_search_results.
-            for app_name in results.into_iter().take(cfg.max_search_results) {
+            } else {
+                Vec::new()
+            }
+        } else {
+            // When there is a query, take only up to max_search_results.
+            self.app.get_search_results().into_iter().take(cfg.max_search_results).collect()
+        };
+        ui.vertical(|ui| {
+            for app_name in filtered {
                 ui.horizontal(|ui| {
                     let mut settings_clicked = false;
                     let _icon_size = if let (Some(w), Some(h)) = (
@@ -785,10 +689,11 @@ impl EframeWrapper {
                     ui.painter().text(gear_pos, center_align, gear, gear_font, gear_color);
                     
                     if settings_clicked {
-                        self.editing = Some((app_name.clone(), String::new()));
+                        // Pre-populate env editing with cached env variables.
+                        let prepop = self.app.get_formatted_launch_options(&app_name);
+                        self.editing = Some((app_name.clone(), prepop));
                     } else {
                         with_custom_style(ui, |s| {
-                            // Removed "app-item" since it is not defined in the default theme.
                             self.theme.apply_combined_widget_style(s, &["app-button"]);
                         }, |ui| {
                             if custom_button(ui, &app_name, "app-button", &self.theme).clicked() {
@@ -855,20 +760,14 @@ impl eframe::App for EframeWrapper {
             .frame(eframe::egui::Frame::NONE.fill(bg))
             .show(ctx, |ui| {
                 let mut secs = vec!["search-bar", "app-list"];
-                if cfg.enable_audio_control {
-                    secs.push("volume-slider");
-                }
-                if cfg.show_time {
-                    secs.push("time-display");
-                }
-                if cfg.enable_power_options {
-                    secs.push("power-button");
-                }
+                if cfg.enable_audio_control { secs.push("volume-slider"); }
+                if cfg.show_time { secs.push("time-display"); }
+                if cfg.enable_power_options { secs.push("power-button"); }
                 secs.sort_by_key(|sec| self.theme.get_order(sec));
                 for sec in secs {
                     if let (Some(x), Some(y)) = (
                         self.theme.get_px_value(sec, "x"),
-                        self.theme.get_px_value(sec, "y"),
+                        self.theme.get_px_value(sec, "y")
                     ) {
                         eframe::egui::Area::new(sec.to_owned().into())
                             .order(eframe::egui::Order::Foreground)
@@ -883,6 +782,9 @@ impl eframe::App for EframeWrapper {
             });
 
         if let Some((ref mut app_name, ref mut opts)) = self.editing {
+            if opts.is_empty() {
+                *opts = self.app.get_formatted_launch_options(app_name);
+            }
             let x = self.theme.get_px_value("env-window", "x")
                 .unwrap_or((ctx.input(|i| i.screen_rect().width()) - 300.0) / 2.0);
             let y = self.theme.get_px_value("env-window", "y")
@@ -905,8 +807,7 @@ impl eframe::App for EframeWrapper {
                                 self.theme.apply_style(ui, "env-input");
                                 ui.add(eframe::egui::TextEdit::singleline(opts)
                                     .hint_text("Enter env variables...")
-                                    .frame(false)
-                                );
+                                    .frame(false));
                             });
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {

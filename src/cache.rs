@@ -19,7 +19,6 @@ use resvg::{
 use crate::{app_launcher::AppLaunchOptions, gui::Config};
 use xdg::BaseDirectories;
 
-// Create CACHE_FILE using the XDG BaseDirectories API.
 static CACHE_FILE: Lazy<PathBuf> = Lazy::new(|| {
     let config_home = BaseDirectories::new()
         .map(|bd| bd.get_config_home().to_owned())
@@ -99,8 +98,8 @@ impl IconManager {
             let opt = usvg::Options::default();
             let tree = usvg::Tree::from_data(&data, &opt)?;
             let size = tree.size().to_int_size();
-            let mut pixmap =
-                Pixmap::new(size.width(), size.height()).ok_or("Failed to create pixmap")?;
+            let mut pixmap = Pixmap::new(size.width(), size.height())
+                .ok_or("Failed to create pixmap")?;
             resvg::render(&tree, usvg::Transform::default(), &mut pixmap.as_mut());
             Ok(egui::ColorImage::from_rgba_unmultiplied(
                 [size.width() as usize, size.height() as usize],

@@ -10,7 +10,7 @@ use rayon::prelude::*;
 use serde::{Serialize, Deserialize};
 
 use crate::{
-    cache::{update_recent_apps, get_launch_options, update_launch_options, resolve_icon_path},
+    cache::{update_recent_apps, get_launch_options, update_launch_options},
     gui::AppInterface,
 };
 use crate::clock::get_current_time;
@@ -243,6 +243,25 @@ impl AppInterface for AppLauncher {
                 crate::cache::resolve_icon_path(icon, &self.config)
             })
     }
+
+    fn get_formatted_launch_options(&self, app_name: &str) -> String {
+        // Return a formatted string representation of the launch options for the given app.
+        if let Some(opts) = self.launch_options.get(app_name) {
+            let mut result = String::new();
+            for (key, value) in &opts.environment_vars {
+                result.push_str(&format!("-e {}={} ", key, value));
+            }
+            if let Some(cmd) = &opts.custom_command {
+                result.push_str(cmd);
+            }
+            if let Some(dir) = &opts.working_directory {
+                result.push_str(&format!(" -w {}", dir));
+            }
+            result.trim().to_string()
+        } else {
+            String::new()
+        }
+    }
 }
 
 impl AppLauncher {
@@ -289,16 +308,16 @@ fn parse_launch_options_input(input: &str, _original_command: Option<String>) ->
             }
         }
     }
-
+    
     let input_command = if !command_parts.is_empty() {
         command_parts.join(" ")
     } else {
         String::new()
     };
-
+    
     if !input_command.is_empty() {
         options.custom_command = Some(input_command);
     }
-
+    
     options
 }
