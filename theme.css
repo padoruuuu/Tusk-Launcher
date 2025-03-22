@@ -47,7 +47,7 @@
 /* Time Display */
 .time-display {
     x: 72px;
-    y: 140px;
+    y: 160px;
     width: 200px;
     height: 50px;
     background-color: rgba(46, 52, 64, 1);
@@ -101,7 +101,7 @@
     padding: 6px;
     font-size: 12px;
     border-radius: 4px;
-    width: 100px;
+    width: 250px;
     height: 50px;
 }
 
@@ -119,17 +119,17 @@
 
 .config {
     enable_recent_apps: true;
-    max_search_results: 3;
+    max_search_results: 5;
     enable_power_options: true;
     show_time: true;
     time_format: "%I:%M %p";
-    time_order: MdyHms;
-    enable_audio_control: true;
+    time_order: HdyHms;
+    enable_audio_control: false;
     max_volume: 1.5;
     volume_update_interval_ms: 500;
     power_commands: systemctl poweroff, loginctl poweroff, poweroff, halt;
     restart_commands: systemctl reboot, loginctl reboot, reboot;
     logout_commands: loginctl terminate-session $XDG_SESSION_ID, hyprctl dispatch exit, swaymsg exit, gnome-session-quit --logout --no-prompt, qdbus org.kde.ksmserver /KSMServer logout 0 0 0;
-    enable_icons: true;
+    enable_icons: false;
     icon_cache_dir: "/home/zeakz/.config/tusk-launcher/icons";
 }
