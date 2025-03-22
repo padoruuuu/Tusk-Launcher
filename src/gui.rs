@@ -61,7 +61,7 @@ const DEFAULT_THEME: &str = r#"/* Centered Streamlined Compact Theme with Absolu
 /* Time Display */
 .time-display {
     x: 72px;
-    y: 140px;
+    y: 160px;
     width: 200px;
     height: 50px;
     background-color: rgba(46, 52, 64, 1);
@@ -115,7 +115,7 @@ const DEFAULT_THEME: &str = r#"/* Centered Streamlined Compact Theme with Absolu
     padding: 6px;
     font-size: 12px;
     border-radius: 4px;
-    width: 100px;
+    width: 200px;
     height: 50px;
 }
 
@@ -133,18 +133,18 @@ const DEFAULT_THEME: &str = r#"/* Centered Streamlined Compact Theme with Absolu
 
 .config {
     enable_recent_apps: true;
-    max_search_results: 3;
+    max_search_results: 5;
     enable_power_options: true;
     show_time: true;
     time_format: "%I:%M %p";
-    time_order: MdyHms;
-    enable_audio_control: true;
+    time_order: HdyHms;
+    enable_audio_control: false;
     max_volume: 1.5;
     volume_update_interval_ms: 500;
     power_commands: systemctl poweroff, loginctl poweroff, poweroff, halt;
     restart_commands: systemctl reboot, loginctl reboot, reboot;
     logout_commands: loginctl terminate-session $XDG_SESSION_ID, hyprctl dispatch exit, swaymsg exit, gnome-session-quit --logout --no-prompt, qdbus org.kde.ksmserver /KSMServer logout 0 0 0;
-    enable_icons: true;
+    enable_icons: false;
     icon_cache_dir: "/home/zeakz/.config/tusk-launcher/icons";
 }
 "#;
@@ -347,9 +347,6 @@ impl Theme {
     pub fn get_config(&self) -> Config {
         let mut config = Config::default();
         if let Some(rule) = self.rules.iter().find(|r| r.class_name.trim().to_lowercase() == "config") {
-            if let Some(val) = rule.props.get("enable_recent_apps") {
-                if let Ok(b) = val.parse::<bool>() { config.enable_recent_apps = b; }
-            }
             if let Some(val) = rule.props.get("max_search_results") {
                 if let Ok(n) = val.parse::<usize>() { config.max_search_results = n; }
             }
@@ -387,11 +384,15 @@ impl Theme {
             if let Some(val) = rule.props.get("logout_commands") {
                 config.logout_commands = val.split(',').map(|s| s.trim().to_string()).collect();
             }
-            if let Some(val) = rule.props.get("enable_icons") {
-                if let Ok(b) = val.parse::<bool>() { config.enable_icons = b; }
-            }
             if let Some(val) = rule.props.get("icon_cache_dir") {
-                config.icon_cache_dir = PathBuf::from(val);
+                // Trim any surrounding quotes before checking for emptiness.
+                let trimmed = val.trim().trim_matches('"');
+                if trimmed.is_empty() {
+                    config.enable_icons = false;
+                } else {
+                    config.icon_cache_dir = PathBuf::from(trimmed);
+                    config.enable_icons = true;
+                }
             }
         }
         config
@@ -611,7 +612,7 @@ impl EframeGui {
             "Application Launcher",
             native_options,
             Box::new(move |cc| {
-                if let Some(scaling_str) = theme.get_style("env-window", "scaling") {
+                if let Some(scaling_str) = theme.get_style("env-input", "scaling") {
                     if let Ok(scaling) = scaling_str.trim().parse::<f32>() {
                         cc.egui_ctx.set_pixels_per_point(scaling);
                     }
@@ -838,8 +839,9 @@ impl eframe::App for EframeWrapper {
                 self.current_volume = self.audio_controller.get_volume();
             }
         }
-        let bg = self.theme.get_style("env-window", "background-color")
-            .or_else(|| self.theme.get_style("main-window", "background-color"))
+        // Take background color from .main-window, falling back to .env-input if not defined.
+        let bg = self.theme.get_style("main-window", "background-color")
+            .or_else(|| self.theme.get_style("env-input", "background-color"))
             .and_then(|s| self.theme.parse_color(&s))
             .unwrap_or(eframe::egui::Color32::BLACK);
 
@@ -856,12 +858,18 @@ impl eframe::App for EframeWrapper {
                         self.theme.get_px_value(sec, "x"),
                         self.theme.get_px_value(sec, "y")
                     ) {
-                        eframe::egui::Area::new(sec.to_owned().into())
+                        let area = eframe::egui::Area::new(sec.to_owned().into())
                             .order(eframe::egui::Order::Foreground)
-                            .fixed_pos(eframe::egui::pos2(x, y))
-                            .show(ctx, |ui| {
-                                self.render_section(ui, sec, ctx);
-                            });
+                            .fixed_pos(eframe::egui::pos2(x, y));
+                        area.show(ctx, |ui| {
+                            if sec == "search-bar" || sec == "env-input" {
+                                if let (Some(w), Some(h)) = (self.theme.get_px_value(sec, "width"), self.theme.get_px_value(sec, "height")) {
+                                    ui.set_min_size(eframe::egui::vec2(w, h));
+                                    ui.set_max_size(eframe::egui::vec2(w, h));
+                                }
+                            }
+                            self.render_section(ui, sec, ctx);
+                        });
                     } else {
                         self.render_section(ui, sec, ctx);
                     }
@@ -872,42 +880,49 @@ impl eframe::App for EframeWrapper {
             if opts.is_empty() {
                 *opts = self.app.get_formatted_launch_options(app_name);
             }
-            let x = self.theme.get_px_value("env-window", "x")
+            let x = self.theme.get_px_value("env-input", "x")
                 .unwrap_or((ctx.input(|i| i.screen_rect().width()) - 300.0) / 2.0);
-            let y = self.theme.get_px_value("env-window", "y")
+            let y = self.theme.get_px_value("env-input", "y")
                 .unwrap_or((ctx.input(|i| i.screen_rect().height()) - 200.0) / 2.0);
             let env_input_bg = self.theme.get_style("env-input", "background-color")
                 .and_then(|s| self.theme.parse_color(&s))
                 .unwrap_or(eframe::egui::Color32::TRANSPARENT);
             let mut save = false;
             let mut cancel = false;
-            eframe::egui::Area::new("env-window".to_string().into())
+            let area = eframe::egui::Area::new("env-input".to_string().into())
                 .order(eframe::egui::Order::Foreground)
                 .movable(true)
-                .default_pos(eframe::egui::pos2(x, y))
-                .show(ctx, |ui| {
-                    eframe::egui::Frame::NONE.fill(env_input_bg).show(ui, |ui| {
-                        ui.vertical(|ui| {
-                            ui.label(format!("Environment Variables for {}", app_name));
-                            ui.add_space(4.0);
-                            with_alignment(ui, &self.theme, "env-input", |ui| {
-                                self.theme.apply_style(ui, "env-input");
-                                ui.add(eframe::egui::TextEdit::singleline(opts)
-                                    .hint_text("Enter env variables...")
-                                    .frame(false));
-                            });
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                if custom_button(ui, "Save", "edit-button", &self.theme).clicked() {
-                                    save = true;
-                                }
-                                if custom_button(ui, "Cancel", "edit-button", &self.theme).clicked() {
-                                    cancel = true;
-                                }
-                            });
+                .default_pos(eframe::egui::pos2(x, y));
+            area.show(ctx, |ui| {
+                if let (Some(w), Some(h)) = (
+                    self.theme.get_px_value("env-input", "width"),
+                    self.theme.get_px_value("env-input", "height")
+                ) {
+                    ui.set_min_size(eframe::egui::vec2(w, h));
+                    ui.set_max_size(eframe::egui::vec2(w, h));
+                }
+                eframe::egui::Frame::NONE.fill(env_input_bg).show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        ui.label(format!("Environment Variables for {}", app_name));
+                        ui.add_space(4.0);
+                        with_alignment(ui, &self.theme, "env-input", |ui| {
+                            self.theme.apply_style(ui, "env-input");
+                            ui.add(eframe::egui::TextEdit::singleline(opts)
+                                .hint_text("Enter env variables...")
+                                .frame(false));
+                        });
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            if custom_button(ui, "Save", "edit-button", &self.theme).clicked() {
+                                save = true;
+                            }
+                            if custom_button(ui, "Cancel", "edit-button", &self.theme).clicked() {
+                                cancel = true;
+                            }
                         });
                     });
                 });
+            });
             if save {
                 let result = format!("LAUNCH_OPTIONS:{}:{}", app_name, opts);
                 self.app.handle_input(&result);
