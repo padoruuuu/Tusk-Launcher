@@ -6,7 +6,6 @@ use std::{
 };
 
 use xdg::BaseDirectories;
-use rayon::prelude::*;
 use serde::{Serialize, Deserialize};
 
 use crate::{
@@ -39,34 +38,58 @@ fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
     let name = name?;
     let mut exec = exec?;
     let icon = icon.unwrap_or_default();
-    for ph in ["%f", "%u", "%U", "%F"] {
+    // Remove common placeholders (including @@ from some Flatpak entries)
+    for ph in ["%f", "%F", "%u", "%U", "%c", "%k", "@@"] {
         exec = exec.replace(ph, "");
     }
+    // Replace %i with the proper icon flag if present
     exec = exec.replace("%i", &format!("--icon {}", icon)).trim().to_string();
+    // Append wm_class if present and if not a Flatpak command (Flatpak doesn't accept --class)
     if let Some(class) = wm_class {
-        exec.push_str(&format!(" --class {}", class));
+        if !exec.contains("flatpak run") {
+            exec.push_str(&format!(" --class {}", class));
+        }
     }
     Some((name, exec, icon))
 }
 
 fn get_desktop_entries() -> Vec<(String, String, String)> {
-    BaseDirectories::new()
-        .map(|xdg| xdg.get_data_dirs())
-        .unwrap_or_default()
-        .par_iter()
-        .flat_map(|dir| {
+    let mut entries = Vec::new();
+
+    // Scan standard XDG data directories
+    if let Ok(xdg) = BaseDirectories::new() {
+        for dir in xdg.get_data_dirs() {
             let apps_dir = dir.join("applications");
-            fs::read_dir(&apps_dir)
-                .ok()
-                .into_iter()
-                .flat_map(|entries| {
-                    entries.filter_map(Result::ok)
-                        .filter(|e| e.path().extension().map_or(false, |ext| ext == "desktop"))
-                        .filter_map(|e| parse_desktop_entry(&e.path()))
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect()
+            if let Ok(read_dir) = fs::read_dir(&apps_dir) {
+                for entry in read_dir.filter_map(Result::ok) {
+                    if entry.path().extension().map_or(false, |ext| ext == "desktop") {
+                        if let Some(e) = parse_desktop_entry(&entry.path()) {
+                            entries.push(e);
+                        }
+                    }
+                }
+            }
+        }
+        // Also include Flatpak and Steam-specific directories so their apps are detected.
+        let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("/"));
+        let extra_dirs = vec![
+            home.join(".local/share/flatpak/exports/share/applications"),
+            home.join(".local/share/applications/steam"),
+        ];
+        for dir in extra_dirs {
+            if let Ok(read_dir) = fs::read_dir(&dir) {
+                for entry in read_dir.filter_map(Result::ok) {
+                    if entry.path().extension().map_or(false, |ext| ext == "desktop") {
+                        if let Some(e) = parse_desktop_entry(&entry.path()) {
+                            entries.push(e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    entries
 }
 
 fn search_applications(query: &str, apps: &[(String, String, String)], max_results: usize) -> Vec<(String, String, String)> {
@@ -91,7 +114,11 @@ fn launch_app(
     
     let (cmd, dir) = if let Some(opts) = options {
         let command = if let Some(custom_cmd) = &opts.custom_command {
-            if custom_cmd.contains("%command%") {
+            // When the custom command is exactly "%command%", use the app's default exec command.
+            // Otherwise, if it contains "%command%" within a larger string, perform the replacement.
+            if custom_cmd.trim() == "%command%" {
+                exec_cmd.to_string()
+            } else if custom_cmd.contains("%command%") {
                 custom_cmd.replace("%command%", exec_cmd)
             } else {
                 format!("{} {}", custom_cmd, exec_cmd)
@@ -116,11 +143,13 @@ fn launch_app(
         }
     }
     
+    // For non-debug launching, use null streams.
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
+        .stderr(Stdio::null());
+    
+    command.spawn()?;
     Ok(())
 }
 
@@ -239,13 +268,10 @@ impl AppInterface for AppLauncher {
         self.results
             .iter()
             .find(|(name, _, _)| name == app_name)
-            .and_then(|(_, _, icon)| {
-                crate::cache::resolve_icon_path(icon, &self.config)
-            })
+            .and_then(|(_, _, icon)| crate::cache::resolve_icon_path(icon, &self.config))
     }
 
     fn get_formatted_launch_options(&self, app_name: &str) -> String {
-        // Return a formatted string representation of the launch options for the given app.
         if let Some(opts) = self.launch_options.get(app_name) {
             let mut result = String::new();
             for (key, value) in &opts.environment_vars {
