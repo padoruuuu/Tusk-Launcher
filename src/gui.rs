@@ -115,7 +115,7 @@ const DEFAULT_THEME: &str = r#"/* Centered Streamlined Compact Theme with Absolu
     padding: 6px;
     font-size: 12px;
     border-radius: 4px;
-    width: 200px;
+    width: 250px;
     height: 50px;
 }
 
@@ -126,7 +126,7 @@ const DEFAULT_THEME: &str = r#"/* Centered Streamlined Compact Theme with Absolu
     hover-text-color: rgba(102, 138, 196, 0.5);
     text-color: rgba(122, 162, 247, 1);
     font-size: 16px;
-    x-offset: -3px;
+    x-offset: -10px;
     y-offset: 0px;
 }
 
@@ -144,7 +144,6 @@ const DEFAULT_THEME: &str = r#"/* Centered Streamlined Compact Theme with Absolu
     power_commands: systemctl poweroff, loginctl poweroff, poweroff, halt;
     restart_commands: systemctl reboot, loginctl reboot, reboot;
     logout_commands: loginctl terminate-session $XDG_SESSION_ID, hyprctl dispatch exit, swaymsg exit, gnome-session-quit --logout --no-prompt, qdbus org.kde.ksmserver /KSMServer logout 0 0 0;
-    enable_icons: false;
     icon_cache_dir: "/home/zeakz/.config/tusk-launcher/icons";
 }
 "#;
@@ -385,7 +384,6 @@ impl Theme {
                 config.logout_commands = val.split(',').map(|s| s.trim().to_string()).collect();
             }
             if let Some(val) = rule.props.get("icon_cache_dir") {
-                // Trim any surrounding quotes before checking for emptiness.
                 let trimmed = val.trim().trim_matches('"');
                 if trimmed.is_empty() {
                     config.enable_icons = false;
@@ -716,8 +714,6 @@ impl EframeWrapper {
         self.theme.apply_style(ui, "app-list");
         let query = self.app.get_query();
         let cfg = self.theme.get_config();
-        // If query is empty, use recent apps if enabled, otherwise empty.
-        // In both cases, limit the results to max_search_results.
         let filtered: Vec<String> = if query.trim().is_empty() {
             if cfg.enable_recent_apps {
                 self.app.get_search_results().into_iter().take(cfg.max_search_results).collect()
@@ -731,18 +727,13 @@ impl EframeWrapper {
             for app_name in filtered {
                 ui.horizontal(|ui| {
                     let mut settings_clicked = false;
-                    let _icon_size = if let (Some(w), Some(h)) = (
-                        self.theme.get_px_value("settings-button", "width"),
-                        self.theme.get_px_value("settings-button", "height"),
-                    ) {
-                        eframe::egui::vec2(w, h)
-                    } else {
-                        eframe::egui::vec2(18.0, 18.0)
-                    };
-                    let (rect, icon_resp) = ui.allocate_exact_size(eframe::egui::vec2(18.0, 18.0), eframe::egui::Sense::click());
+                    let btn_width = self.theme.get_px_value("settings-button", "width").unwrap_or(22.0);
+                    let btn_height = self.theme.get_px_value("settings-button", "height").unwrap_or(22.0);
+                    let (rect, icon_resp) = ui.allocate_exact_size(eframe::egui::vec2(btn_width, btn_height), eframe::egui::Sense::click());
                     if icon_resp.clicked() && self.editing.is_none() {
                         settings_clicked = true;
                     }
+                    // Draw icon if available.
                     if let Some(icon_path) = self.app.get_icon_path(&app_name) {
                         if let Some(tex) = self.icon_manager.get_texture(ctx, &icon_path) {
                             ui.painter().image(
@@ -753,6 +744,8 @@ impl EframeWrapper {
                             );
                         }
                     }
+                    // Apply settings button style before drawing gear.
+                    self.theme.apply_style(ui, "settings-button");
                     let gear = "⚙";
                     let gear_color = self.theme.get_text_color("settings-button", icon_resp.hovered())
                         .unwrap_or(eframe::egui::Color32::from_rgb(64, 64, 64));
@@ -839,15 +832,20 @@ impl eframe::App for EframeWrapper {
                 self.current_volume = self.audio_controller.get_volume();
             }
         }
-        // Take background color from .main-window, falling back to .env-input if not defined.
+        // Use background color from .main-window, or fallback to .env-input.
         let bg = self.theme.get_style("main-window", "background-color")
             .or_else(|| self.theme.get_style("env-input", "background-color"))
             .and_then(|s| self.theme.parse_color(&s))
             .unwrap_or(eframe::egui::Color32::BLACK);
 
-        eframe::egui::CentralPanel::default()
-            .frame(eframe::egui::Frame::NONE.fill(bg))
+        // Apply the main-window dimensions.
+        let main_width = self.theme.get_px_value("main-window", "width").map(|w| if w < 0.0 {300.0} else {w}).unwrap_or(300.0);
+        let main_height = self.theme.get_px_value("main-window", "height").map(|h| if h < 0.0 {200.0} else {h}).unwrap_or(200.0);
+        eframe::egui::Area::new("main-window".into())
+            .fixed_pos(eframe::egui::pos2(0.0, 0.0))
             .show(ctx, |ui| {
+                ui.set_min_size(eframe::egui::vec2(main_width, main_height));
+                ui.set_max_size(eframe::egui::vec2(main_width, main_height));
                 let mut secs = vec!["search-bar", "app-list"];
                 if cfg.enable_audio_control { secs.push("volume-slider"); }
                 if cfg.show_time { secs.push("time-display"); }
@@ -877,9 +875,7 @@ impl eframe::App for EframeWrapper {
             });
 
         if let Some((ref mut app_name, ref mut opts)) = self.editing {
-            if opts.is_empty() {
-                *opts = self.app.get_formatted_launch_options(app_name);
-            }
+            // Do not auto-populate if the input becomes completely empty.
             let x = self.theme.get_px_value("env-input", "x")
                 .unwrap_or((ctx.input(|i| i.screen_rect().width()) - 300.0) / 2.0);
             let y = self.theme.get_px_value("env-input", "y")
