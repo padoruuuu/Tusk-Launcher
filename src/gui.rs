@@ -46,7 +46,6 @@ const DEFAULT_THEME: &str = r#"/* Centered Streamlined Compact Theme with Absolu
     padding: 1px;
 }
 
-
 /* App Button (used with custom_button for launching apps) */
 .app-button {
     background-color: rgba(122, 162, 247, 1);
@@ -56,6 +55,26 @@ const DEFAULT_THEME: &str = r#"/* Centered Streamlined Compact Theme with Absolu
     border-radius: 4px;
     padding: 3px;
     font-size: 14px;
+    order: 2;
+}
+
+/* App Icon (new style for icons in the app list) */
+.app-icon {
+    width: 22px;
+    height: 22px;
+    order: 1;
+}
+
+/* Settings Button */
+.settings-button {
+    width: 22px;
+    height: 22px;
+    hover-text-color: rgba(102, 138, 196, 0.5);
+    text-color: rgba(122, 162, 247, 1);
+    font-size: 16px;
+    x-offset: -10px;
+    y-offset: 0px;
+    order: 0;
 }
 
 /* Time Display */
@@ -119,26 +138,15 @@ const DEFAULT_THEME: &str = r#"/* Centered Streamlined Compact Theme with Absolu
     height: 50px;
 }
 
-/* Settings Button */
-.settings-button {
-    width: 22px;
-    height: 22px;
-    hover-text-color: rgba(102, 138, 196, 0.5);
-    text-color: rgba(122, 162, 247, 1);
-    font-size: 16px;
-    x-offset: -10px;
-    y-offset: 0px;
-}
-
-
+/* Config settings */
 .config {
     enable_recent_apps: true;
     max_search_results: 5;
     enable_power_options: true;
     show_time: true;
     time_format: "%I:%M %p";
-    time_order: HdyHms;
-    enable_audio_control: false;
+    time_order: MdyHms;
+    enable_audio_control: true;
     max_volume: 1.5;
     volume_update_interval_ms: 500;
     power_commands: systemctl poweroff, loginctl poweroff, poweroff, halt;
@@ -256,7 +264,7 @@ pub struct Theme {
 }
 
 impl Theme {
-    fn load_or_create() -> Result<Self, Box<dyn Error>> {
+    pub fn load_or_create() -> Result<Self, Box<dyn Error>> {
         let dirs = xdg::BaseDirectories::new()?;
         let path = dirs.place_config_file("tusk-launcher/theme.css")?;
         if let Some(parent) = path.parent() {
@@ -279,29 +287,40 @@ impl Theme {
         while let Some(dot) = rest.find('.') {
             rest = &rest[dot + 1..];
             let class_end = rest.find(|c: char| c.is_whitespace() || c == '{').unwrap_or(rest.len());
-            if class_end == 0 { break; }
+            if class_end == 0 {
+                break;
+            }
             let class_name = rest[..class_end].trim().to_string();
             if let Some(brace_pos) = rest.find('{') {
                 let after_brace = &rest[brace_pos + 1..];
                 if let Some(end_brace) = after_brace.find('}') {
                     let block = &after_brace[..end_brace];
-                    let props = block.split(';')
+                    let props = block
+                        .split(';')
                         .filter_map(|decl| {
                             let decl = decl.trim();
-                            if decl.is_empty() { None }
-                            else { decl.split_once(':').map(|(k, v)| (k.trim().to_string(), v.trim().to_string())) }
+                            if decl.is_empty() {
+                                None
+                            } else {
+                                decl.split_once(':').map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+                            }
                         })
                         .collect();
                     rules.push(Rule { class_name, props });
                     rest = &after_brace[end_brace + 1..];
-                } else { break; }
-            } else { break; }
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
         }
         rules
     }
 
     fn get_style(&self, class: &str, prop: &str) -> Option<String> {
-        self.rules.iter()
+        self.rules
+            .iter()
             .find(|r| r.class_name.trim().to_lowercase() == class.trim().to_lowercase())
             .and_then(|r| r.props.get(prop).cloned())
     }
@@ -323,7 +342,12 @@ impl Theme {
                 let g = vals[1].parse().ok()?;
                 let b = vals[2].parse().ok()?;
                 let a = vals[3].parse::<f32>().ok()?;
-                return Some(eframe::egui::Color32::from_rgba_unmultiplied(r, g, b, (a * 255.0) as u8));
+                return Some(eframe::egui::Color32::from_rgba_unmultiplied(
+                    r,
+                    g,
+                    b,
+                    (a * 255.0) as u8,
+                ));
             }
         } else if s.starts_with('#') && s.len() == 7 {
             let hex = &s[1..];
@@ -336,24 +360,39 @@ impl Theme {
     }
 
     fn get_px_value(&self, class: &str, prop: &str) -> Option<f32> {
-        self.get_style(class, prop)?.trim_end_matches("px").parse().ok()
+        self.get_style(class, prop)?
+            .trim_end_matches("px")
+            .parse()
+            .ok()
     }
 
     fn get_order(&self, section: &str) -> i32 {
-        self.get_style(section, "order").and_then(|s| s.parse().ok()).unwrap_or(0)
+        self.get_style(section, "order")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0)
     }
 
     pub fn get_config(&self) -> Config {
         let mut config = Config::default();
-        if let Some(rule) = self.rules.iter().find(|r| r.class_name.trim().to_lowercase() == "config") {
+        if let Some(rule) = self
+            .rules
+            .iter()
+            .find(|r| r.class_name.trim().to_lowercase() == "config")
+        {
             if let Some(val) = rule.props.get("max_search_results") {
-                if let Ok(n) = val.parse::<usize>() { config.max_search_results = n; }
+                if let Ok(n) = val.parse::<usize>() {
+                    config.max_search_results = n;
+                }
             }
             if let Some(val) = rule.props.get("enable_power_options") {
-                if let Ok(b) = val.parse::<bool>() { config.enable_power_options = b; }
+                if let Ok(b) = val.parse::<bool>() {
+                    config.enable_power_options = b;
+                }
             }
             if let Some(val) = rule.props.get("show_time") {
-                if let Ok(b) = val.parse::<bool>() { config.show_time = b; }
+                if let Ok(b) = val.parse::<bool>() {
+                    config.show_time = b;
+                }
             }
             if let Some(val) = rule.props.get("time_format") {
                 config.time_format = val.clone();
@@ -366,22 +405,37 @@ impl Theme {
                 };
             }
             if let Some(val) = rule.props.get("enable_audio_control") {
-                if let Ok(b) = val.parse::<bool>() { config.enable_audio_control = b; }
+                if let Ok(b) = val.parse::<bool>() {
+                    config.enable_audio_control = b;
+                }
             }
             if let Some(val) = rule.props.get("max_volume") {
-                if let Ok(v) = val.parse::<f32>() { config.max_volume = v; }
+                if let Ok(v) = val.parse::<f32>() {
+                    config.max_volume = v;
+                }
             }
             if let Some(val) = rule.props.get("volume_update_interval_ms") {
-                if let Ok(n) = val.parse::<u64>() { config.volume_update_interval_ms = n; }
+                if let Ok(n) = val.parse::<u64>() {
+                    config.volume_update_interval_ms = n;
+                }
             }
             if let Some(val) = rule.props.get("power_commands") {
-                config.power_commands = val.split(',').map(|s| s.trim().to_string()).collect();
+                config.power_commands = val
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
             }
             if let Some(val) = rule.props.get("restart_commands") {
-                config.restart_commands = val.split(',').map(|s| s.trim().to_string()).collect();
+                config.restart_commands = val
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
             }
             if let Some(val) = rule.props.get("logout_commands") {
-                config.logout_commands = val.split(',').map(|s| s.trim().to_string()).collect();
+                config.logout_commands = val
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
             }
             if let Some(val) = rule.props.get("icon_cache_dir") {
                 let trimmed = val.trim().trim_matches('"');
@@ -396,14 +450,24 @@ impl Theme {
         config
     }
 
-    fn get_frame_properties(&self, class: &str, default_fill: eframe::egui::Color32)
-        -> (eframe::egui::Color32, Option<eframe::egui::Color32>, eframe::egui::CornerRadius) {
-        let base = self.get_style(class, "background-color")
+    fn get_frame_properties(
+        &self,
+        class: &str,
+        default_fill: eframe::egui::Color32,
+    ) -> (
+        eframe::egui::Color32,
+        Option<eframe::egui::Color32>,
+        eframe::egui::CornerRadius,
+    ) {
+        let base = self
+            .get_style(class, "background-color")
             .and_then(|s| self.parse_color(&s))
             .unwrap_or(default_fill);
-        let hover = self.get_style(class, "hover-background-color")
+        let hover = self
+            .get_style(class, "hover-background-color")
             .and_then(|s| self.parse_color(&s));
-        let rounding = self.get_style(class, "border-radius")
+        let rounding = self
+            .get_style(class, "border-radius")
             .and_then(|s| s.replace("px", "").parse::<f32>().ok())
             .map(|val| eframe::egui::CornerRadius::same(val as u8))
             .unwrap_or_default();
@@ -412,21 +476,29 @@ impl Theme {
 
     fn apply_style(&self, ui: &mut eframe::egui::Ui, class: &str) {
         let style = ui.style_mut();
-        if let Some(bg) = self.get_style(class, "background-color")
-            .and_then(|s| self.parse_color(&s)) {
+        if let Some(bg) = self
+            .get_style(class, "background-color")
+            .and_then(|s| self.parse_color(&s))
+        {
             style.visuals.panel_fill = bg;
         }
-        if let Some(col) = self.get_style(class, "text-color")
-            .and_then(|s| self.parse_color(&s)) {
+        if let Some(col) = self
+            .get_style(class, "text-color")
+            .and_then(|s| self.parse_color(&s))
+        {
             style.visuals.override_text_color = Some(col);
         }
-        if let Some(pad) = self.get_style(class, "padding")
-            .and_then(|s| s.replace("px", "").parse::<f32>().ok()) {
+        if let Some(pad) = self
+            .get_style(class, "padding")
+            .and_then(|s| s.replace("px", "").parse::<f32>().ok())
+        {
             style.spacing.item_spacing = eframe::egui::vec2(pad, pad);
             style.spacing.window_margin = eframe::egui::Margin::symmetric(pad as i8, pad as i8);
         }
-        if let Some(rad) = self.get_style(class, "border-radius")
-            .and_then(|s| s.replace("px", "").parse::<f32>().ok()) {
+        if let Some(rad) = self
+            .get_style(class, "border-radius")
+            .and_then(|s| s.replace("px", "").parse::<f32>().ok())
+        {
             let r = eframe::egui::CornerRadius::same(rad as u8);
             for widget in [
                 &mut style.visuals.widgets.noninteractive,
@@ -434,12 +506,15 @@ impl Theme {
                 &mut style.visuals.widgets.hovered,
                 &mut style.visuals.widgets.active,
             ]
-            .iter_mut() {
+            .iter_mut()
+            {
                 widget.corner_radius = r;
             }
         }
-        if let Some(sz) = self.get_style(class, "font-size")
-            .and_then(|s| s.replace("px", "").parse::<f32>().ok()) {
+        if let Some(sz) = self
+            .get_style(class, "font-size")
+            .and_then(|s| s.replace("px", "").parse::<f32>().ok())
+        {
             if let Some(text) = ui.style_mut().text_styles.get_mut(&eframe::egui::TextStyle::Body) {
                 text.size = sz;
             }
@@ -447,29 +522,40 @@ impl Theme {
     }
 
     fn apply_widget_style(&self, style: &mut eframe::egui::Style, class: &str) {
-        if let Some(bg) = self.get_style(class, "background-color").and_then(|s| self.parse_color(&s)) {
-            let hover = self.get_style(class, "hover-background-color")
+        if let Some(bg) = self
+            .get_style(class, "background-color")
+            .and_then(|s| self.parse_color(&s))
+        {
+            let hover = self
+                .get_style(class, "hover-background-color")
                 .and_then(|s| self.parse_color(&s))
                 .unwrap_or(bg);
             set_widget_bg(style, bg, hover);
         }
-        if let Some(tc) = self.get_style(class, "text-color").and_then(|s| self.parse_color(&s)) {
+        if let Some(tc) = self
+            .get_style(class, "text-color")
+            .and_then(|s| self.parse_color(&s))
+        {
             style.visuals.override_text_color = Some(tc);
         }
     }
 
     fn apply_combined_widget_style(&self, style: &mut eframe::egui::Style, classes: &[&str]) {
         let default_fill = eframe::egui::Color32::TRANSPARENT;
-        let base = self.get_combined_style(classes, "container-background-color")
+        let base = self
+            .get_combined_style(classes, "container-background-color")
             .or_else(|| self.get_combined_style(classes, "background-color"))
             .and_then(|s| self.parse_color(&s))
             .unwrap_or(default_fill);
-        let hover = self.get_combined_style(classes, "hover-background-color")
+        let hover = self
+            .get_combined_style(classes, "hover-background-color")
             .and_then(|s| self.parse_color(&s))
             .unwrap_or(base);
         set_widget_bg(style, base, hover);
-        if let Some(tc) = self.get_combined_style(classes, "text-color")
-            .and_then(|s| self.parse_color(&s)) {
+        if let Some(tc) = self
+            .get_combined_style(classes, "text-color")
+            .and_then(|s| self.parse_color(&s))
+        {
             style.visuals.override_text_color = Some(tc);
         }
     }
@@ -478,9 +564,13 @@ impl Theme {
         if hovered {
             self.get_style(class, "hover-text-color")
                 .and_then(|s| self.parse_color(&s))
-                .or_else(|| self.get_style(class, "text-color").and_then(|s| self.parse_color(&s)))
+                .or_else(|| {
+                    self.get_style(class, "text-color")
+                        .and_then(|s| self.parse_color(&s))
+                })
         } else {
-            self.get_style(class, "text-color").and_then(|s| self.parse_color(&s))
+            self.get_style(class, "text-color")
+                .and_then(|s| self.parse_color(&s))
         }
     }
 }
@@ -502,29 +592,50 @@ fn set_widget_bg(style: &mut eframe::egui::Style, base: eframe::egui::Color32, h
     widgets.active.expansion = 0.0;
 }
 
-fn custom_button(ui: &mut eframe::egui::Ui, label: &str, class: &str, theme: &Theme) -> eframe::egui::Response {
+fn custom_button(
+    ui: &mut eframe::egui::Ui,
+    label: &str,
+    class: &str,
+    theme: &Theme,
+) -> eframe::egui::Response {
+    // We'll give each button a unique ID by also using the label:
     let text_style = eframe::egui::TextStyle::Button;
     let font_id = ui.style().text_styles.get(&text_style).cloned().unwrap_or_default();
     let galley = ui.fonts(|fonts| {
         fonts.layout_no_wrap(label.to_owned(), font_id.clone(), eframe::egui::Color32::WHITE)
     });
     let desired_size = galley.size() + ui.spacing().button_padding * 2.0;
-    let (rect, response) = ui.allocate_exact_size(desired_size, eframe::egui::Sense::click());
+
+    let (rect, _) = ui.allocate_exact_size(desired_size, eframe::egui::Sense::hover());
+    // We'll create a new ID for this particular button using the label:
+    let button_id = ui.id().with(label);
+    let response = ui.interact(rect, button_id, eframe::egui::Sense::click());
+
     if ui.is_rect_visible(rect) {
-        let (base_bg, hover_bg, rounding) = theme.get_frame_properties(class, ui.style().visuals.widgets.inactive.bg_fill);
-        let normal_tc = theme.get_style(class, "text-color")
+        let (base_bg, hover_bg, rounding) =
+            theme.get_frame_properties(class, ui.style().visuals.widgets.inactive.bg_fill);
+        let normal_tc = theme
+            .get_style(class, "text-color")
             .and_then(|s| theme.parse_color(&s))
             .unwrap_or(eframe::egui::Color32::WHITE);
-        let hover_tc = theme.get_style(class, "hover-text-color")
+        let hover_tc = theme
+            .get_style(class, "hover-text-color")
             .and_then(|s| theme.parse_color(&s))
             .unwrap_or(normal_tc);
-        let bg = if response.hovered() { hover_bg.unwrap_or(base_bg) } else { base_bg };
+
+        let bg = if response.hovered() {
+            hover_bg.unwrap_or(base_bg)
+        } else {
+            base_bg
+        };
         ui.painter().rect_filled(rect, rounding, bg);
+
         let text_color = if response.hovered() { hover_tc } else { normal_tc };
         let center_align = eframe::egui::Align2([eframe::egui::Align::Center, eframe::egui::Align::Center]);
         ui.painter().galley(rect.center() - galley.size() * 0.5, galley, text_color);
         ui.painter().text(rect.center(), center_align, label, font_id, text_color);
     }
+
     response
 }
 
@@ -645,11 +756,17 @@ impl EframeWrapper {
     fn render_search_bar(&mut self, ui: &mut eframe::egui::Ui) {
         with_alignment(ui, &self.theme, "search-bar", |ui| {
             self.theme.apply_style(ui, "search-bar");
-            let (base_bg, hover_bg, rounding) = self.theme.get_frame_properties("search-bar", ui.visuals().panel_fill);
+            let (base_bg, hover_bg, rounding) =
+                self.theme.get_frame_properties("search-bar", ui.visuals().panel_fill);
             let rect = ui.available_rect_before_wrap();
             let resp = ui.interact(rect, ui.id().with("search-bar"), eframe::egui::Sense::hover());
-            let fill = if resp.hovered() { hover_bg.unwrap_or(base_bg) } else { base_bg };
-            eframe::egui::Frame::NONE.fill(fill)
+            let fill = if resp.hovered() {
+                hover_bg.unwrap_or(base_bg)
+            } else {
+                base_bg
+            };
+            eframe::egui::Frame::NONE
+                .fill(fill)
                 .corner_radius(rounding)
                 .show(ui, |ui| {
                     with_custom_style(ui, |s| {
@@ -658,9 +775,11 @@ impl EframeWrapper {
                         }
                     }, |ui| {
                         let mut query = self.app.get_query();
-                        let resp = ui.add(eframe::egui::TextEdit::singleline(&mut query)
-                            .hint_text("Search...")
-                            .frame(false));
+                        let resp = ui.add(
+                            eframe::egui::TextEdit::singleline(&mut query)
+                                .hint_text("Search...")
+                                .frame(false),
+                        );
                         if !self.focused {
                             resp.request_focus();
                             self.focused = true;
@@ -681,7 +800,9 @@ impl EframeWrapper {
                     ui.spacing_mut().item_spacing.x = gap;
                 }
                 ui.label("Volume:");
-                let (base, hover, rounding) = self.theme.get_frame_properties("volume-slider", ui.style().visuals.widgets.inactive.bg_fill);
+                let (base, hover, rounding) =
+                    self.theme
+                        .get_frame_properties("volume-slider", ui.style().visuals.widgets.inactive.bg_fill);
                 let slider_visuals = {
                     let mut s = ui.style().visuals.widgets.inactive.clone();
                     s.bg_fill = base;
@@ -693,15 +814,27 @@ impl EframeWrapper {
                     s.visuals.widgets.hovered.bg_fill = hover.unwrap_or(base);
                     s.visuals.widgets.hovered.weak_bg_fill = hover.unwrap_or(base);
                     s.visuals.widgets.active = slider_visuals.clone();
-                    s.visuals.widgets.inactive.bg_stroke = eframe::egui::Stroke::new(0.0, eframe::egui::Color32::TRANSPARENT);
-                    s.visuals.widgets.hovered.bg_stroke = eframe::egui::Stroke::new(0.0, eframe::egui::Color32::TRANSPARENT);
-                    s.visuals.widgets.active.bg_stroke = eframe::egui::Stroke::new(0.0, eframe::egui::Color32::TRANSPARENT);
+                    s.visuals.widgets.inactive.bg_stroke =
+                        eframe::egui::Stroke::new(0.0, eframe::egui::Color32::TRANSPARENT);
+                    s.visuals.widgets.hovered.bg_stroke =
+                        eframe::egui::Stroke::new(0.0, eframe::egui::Color32::TRANSPARENT);
+                    s.visuals.widgets.active.bg_stroke =
+                        eframe::egui::Stroke::new(0.0, eframe::egui::Color32::TRANSPARENT);
                     s.visuals.widgets.hovered.expansion = 0.0;
                     s.visuals.widgets.active.expansion = 0.0;
                 }, |ui| {
-                    let slider = eframe::egui::Slider::new(&mut self.current_volume, 0.0..=self.theme.get_config().max_volume)
-                        .custom_formatter(|n, _| format!("{:.0}%", n * 100.0))
-                        .custom_parser(|s| s.trim().trim_end_matches('%').parse::<f64>().ok().map(|n| n / 100.0));
+                    let slider = eframe::egui::Slider::new(
+                        &mut self.current_volume,
+                        0.0..=self.theme.get_config().max_volume,
+                    )
+                    .custom_formatter(|n, _| format!("{:.0}%", n * 100.0))
+                    .custom_parser(|s| {
+                        s.trim()
+                            .trim_end_matches('%')
+                            .parse::<f64>()
+                            .ok()
+                            .map(|n| n / 100.0)
+                    });
                     if ui.add(slider).changed() {
                         let _ = self.audio_controller.set_volume(self.current_volume);
                     }
@@ -716,71 +849,152 @@ impl EframeWrapper {
         let cfg = self.theme.get_config();
         let filtered: Vec<String> = if query.trim().is_empty() {
             if cfg.enable_recent_apps {
-                self.app.get_search_results().into_iter().take(cfg.max_search_results).collect()
+                self.app
+                    .get_search_results()
+                    .into_iter()
+                    .take(cfg.max_search_results)
+                    .collect()
             } else {
                 Vec::new()
             }
         } else {
-            self.app.get_search_results().into_iter().take(cfg.max_search_results).collect()
+            self.app
+                .get_search_results()
+                .into_iter()
+                .take(cfg.max_search_results)
+                .collect()
         };
         ui.vertical(|ui| {
             for app_name in filtered {
+                // Each row gets a unique ID to avoid repeated ID warnings:
+                let row_id = ui.id().with(&app_name);
                 ui.horizontal(|ui| {
-                    let mut settings_clicked = false;
-                    let btn_width = self.theme.get_px_value("settings-button", "width").unwrap_or(22.0);
-                    let btn_height = self.theme.get_px_value("settings-button", "height").unwrap_or(22.0);
-                    let (rect, icon_resp) = ui.allocate_exact_size(eframe::egui::vec2(btn_width, btn_height), eframe::egui::Sense::click());
-                    if icon_resp.clicked() && self.editing.is_none() {
-                        settings_clicked = true;
-                    }
-                    // Draw icon if available.
-                    if let Some(icon_path) = self.app.get_icon_path(&app_name) {
-                        if let Some(tex) = self.icon_manager.get_texture(ctx, &icon_path) {
-                            ui.painter().image(
-                                tex.id(),
-                                rect,
-                                eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0)),
-                                eframe::egui::Color32::WHITE,
-                            );
-                        }
-                    }
-                    // Apply settings button style before drawing gear.
-                    self.theme.apply_style(ui, "settings-button");
-                    let gear = "⚙";
-                    let gear_color = self.theme.get_text_color("settings-button", icon_resp.hovered())
-                        .unwrap_or(eframe::egui::Color32::from_rgb(64, 64, 64));
-                    let gear_font = if let Some(font_size_str) = self.theme.get_style("settings-button", "font-size") {
-                        let mut text = eframe::egui::TextStyle::Button.resolve(ui.style());
-                        if let Ok(font_size) = font_size_str.replace("px", "").parse::<f32>() {
-                            text.size = font_size;
-                        }
-                        text
-                    } else {
-                        eframe::egui::TextStyle::Button.resolve(ui.style())
-                    };
-                    let gear_size = ui.fonts(|f| {
-                        f.layout_no_wrap(gear.to_owned(), gear_font.clone(), gear_color).size()
-                    });
-                    let x_offset = self.theme.get_px_value("settings-button", "x-offset").unwrap_or(0.0);
-                    let y_offset = self.theme.get_px_value("settings-button", "y-offset").unwrap_or(0.0);
-                    let gear_pos = eframe::egui::pos2(
-                        rect.center().x - gear_size.x / 2.0 + x_offset,
-                        rect.center().y - gear_size.y / 2.0 + y_offset,
-                    );
-                    let center_align = eframe::egui::Align2([eframe::egui::Align::Center, eframe::egui::Align::Center]);
-                    ui.painter().text(gear_pos, center_align, gear, gear_font, gear_color);
-                    
-                    if settings_clicked {
-                        let prepop = self.app.get_formatted_launch_options(&app_name);
-                        self.editing = Some((app_name.clone(), prepop));
-                    } else {
-                        with_custom_style(ui, |s| {
-                            self.theme.apply_combined_widget_style(s, &["app-button"]);
-                        }, |ui| {
-                            if custom_button(ui, &app_name, "app-button", &self.theme).clicked() {
-                                self.app.launch_app(&app_name);
+                    // Determine orders for each element.
+                    let order_settings = self
+                        .theme
+                        .get_style("settings-button", "order")
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
+                    let order_icon = self
+                        .theme
+                        .get_style("app-icon", "order")
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(1);
+                    let order_app = self
+                        .theme
+                        .get_style("app-button", "order")
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(2);
+
+                    let mut elements = vec![
+                        (order_settings, "settings"),
+                        (order_icon, "icon"),
+                        (order_app, "app"),
+                    ];
+                    elements.sort_by_key(|(order, _)| *order);
+
+                    for (_, elem) in elements {
+                        match elem {
+                            "settings" => {
+                                let btn_width = self
+                                    .theme
+                                    .get_px_value("settings-button", "width")
+                                    .unwrap_or(22.0);
+                                let btn_height = self
+                                    .theme
+                                    .get_px_value("settings-button", "height")
+                                    .unwrap_or(22.0);
+                                let x_offset = self
+                                    .theme
+                                    .get_px_value("settings-button", "x-offset")
+                                    .unwrap_or(0.0);
+                                let y_offset = self
+                                    .theme
+                                    .get_px_value("settings-button", "y-offset")
+                                    .unwrap_or(0.0);
+
+                                // Allocate space for the settings button (no ID here).
+                                let (base_rect, _) = ui.allocate_exact_size(
+                                    eframe::egui::vec2(btn_width, btn_height),
+                                    eframe::egui::Sense::hover(),
+                                );
+
+                                // Translate rect by offsets:
+                                let new_rect = base_rect.translate(egui::vec2(x_offset, y_offset));
+
+                                // Create a unique ID for the settings button in this row:
+                                let settings_id = row_id.with("settings-button");
+                                let resp =
+                                    ui.interact(new_rect, settings_id, eframe::egui::Sense::click());
+
+                                self.theme.apply_style(ui, "settings-button");
+                                let gear = "⚙";
+                                let center_align = eframe::egui::Align2([
+                                    eframe::egui::Align::Center,
+                                    eframe::egui::Align::Center,
+                                ]);
+                                let gear_font = eframe::egui::TextStyle::Button.resolve(ui.style());
+                                let gear_color = self
+                                    .theme
+                                    .get_text_color("settings-button", resp.hovered())
+                                    .unwrap_or(eframe::egui::Color32::from_rgb(64, 64, 64));
+                                ui.painter().text(
+                                    new_rect.center(),
+                                    center_align,
+                                    gear,
+                                    gear_font,
+                                    gear_color,
+                                );
+
+                                if resp.clicked() && self.editing.is_none() {
+                                    let prepop =
+                                        self.app.get_formatted_launch_options(&app_name);
+                                    self.editing = Some((app_name.clone(), prepop));
+                                }
                             }
-                        });
+                            "icon" => {
+                                if let Some(icon_path) = self.app.get_icon_path(&app_name) {
+                                    let icon_width = self
+                                        .theme
+                                        .get_px_value("app-icon", "width")
+                                        .unwrap_or(22.0);
+                                    let icon_height = self
+                                        .theme
+                                        .get_px_value("app-icon", "height")
+                                        .unwrap_or(22.0);
+
+                                    let (icon_rect, _) = ui.allocate_exact_size(
+                                        eframe::egui::vec2(icon_width, icon_height),
+                                        eframe::egui::Sense::hover(),
+                                    );
+
+                                    if let Some(tex) = self.icon_manager.get_texture(ctx, &icon_path)
+                                    {
+                                        ui.painter().image(
+                                            tex.id(),
+                                            icon_rect,
+                                            eframe::egui::Rect::from_min_max(
+                                                eframe::egui::Pos2::ZERO,
+                                                eframe::egui::Pos2::new(1.0, 1.0),
+                                            ),
+                                            eframe::egui::Color32::WHITE,
+                                        );
+                                    }
+                                }
+                            }
+                            "app" => {
+                                with_custom_style(ui, |s| {
+                                    self.theme.apply_combined_widget_style(s, &["app-button"]);
+                                }, |ui| {
+                                    // Make a unique ID for the app button:
+                                    // but custom_button internally uses label-based ID, so it's already unique enough.
+                                    if custom_button(ui, &app_name, "app-button", &self.theme).clicked() {
+                                        self.app.launch_app(&app_name);
+                                    }
+                                });
+                            }
+                            _ => {}
+                        }
                     }
                 });
                 ui.add_space(4.0);
@@ -811,7 +1025,12 @@ impl EframeWrapper {
         });
     }
 
-    fn render_section(&mut self, ui: &mut eframe::egui::Ui, sec: &str, ctx: &eframe::egui::Context) {
+    fn render_section(
+        &mut self,
+        ui: &mut eframe::egui::Ui,
+        sec: &str,
+        ctx: &eframe::egui::Context,
+    ) {
         match sec {
             "search-bar" => self.render_search_bar(ui),
             "volume-slider" => self.render_volume_slider(ui),
@@ -832,36 +1051,57 @@ impl eframe::App for EframeWrapper {
                 self.current_volume = self.audio_controller.get_volume();
             }
         }
-        // Use background color from .main-window, or fallback to .env-input.
-        let bg = self.theme.get_style("main-window", "background-color")
+
+        let _bg = self
+            .theme
+            .get_style("main-window", "background-color")
             .or_else(|| self.theme.get_style("env-input", "background-color"))
             .and_then(|s| self.theme.parse_color(&s))
             .unwrap_or(eframe::egui::Color32::BLACK);
 
-        // Apply the main-window dimensions.
-        let main_width = self.theme.get_px_value("main-window", "width").map(|w| if w < 0.0 {300.0} else {w}).unwrap_or(300.0);
-        let main_height = self.theme.get_px_value("main-window", "height").map(|h| if h < 0.0 {200.0} else {h}).unwrap_or(200.0);
+        let main_width = self
+            .theme
+            .get_px_value("main-window", "width")
+            .map(|w| if w < 0.0 { 300.0 } else { w })
+            .unwrap_or(300.0);
+        let main_height = self
+            .theme
+            .get_px_value("main-window", "height")
+            .map(|h| if h < 0.0 { 200.0 } else { h })
+            .unwrap_or(200.0);
+
         eframe::egui::Area::new("main-window".into())
             .fixed_pos(eframe::egui::pos2(0.0, 0.0))
             .show(ctx, |ui| {
                 ui.set_min_size(eframe::egui::vec2(main_width, main_height));
                 ui.set_max_size(eframe::egui::vec2(main_width, main_height));
+
                 let mut secs = vec!["search-bar", "app-list"];
-                if cfg.enable_audio_control { secs.push("volume-slider"); }
-                if cfg.show_time { secs.push("time-display"); }
-                if cfg.enable_power_options { secs.push("power-button"); }
+                if cfg.enable_audio_control {
+                    secs.push("volume-slider");
+                }
+                if cfg.show_time {
+                    secs.push("time-display");
+                }
+                if cfg.enable_power_options {
+                    secs.push("power-button");
+                }
                 secs.sort_by_key(|sec| self.theme.get_order(sec));
+
                 for sec in secs {
                     if let (Some(x), Some(y)) = (
                         self.theme.get_px_value(sec, "x"),
-                        self.theme.get_px_value(sec, "y")
+                        self.theme.get_px_value(sec, "y"),
                     ) {
                         let area = eframe::egui::Area::new(sec.to_owned().into())
                             .order(eframe::egui::Order::Foreground)
                             .fixed_pos(eframe::egui::pos2(x, y));
                         area.show(ctx, |ui| {
                             if sec == "search-bar" || sec == "env-input" {
-                                if let (Some(w), Some(h)) = (self.theme.get_px_value(sec, "width"), self.theme.get_px_value(sec, "height")) {
+                                if let (Some(w), Some(h)) = (
+                                    self.theme.get_px_value(sec, "width"),
+                                    self.theme.get_px_value(sec, "height"),
+                                ) {
                                     ui.set_min_size(eframe::egui::vec2(w, h));
                                     ui.set_max_size(eframe::egui::vec2(w, h));
                                 }
@@ -875,16 +1115,23 @@ impl eframe::App for EframeWrapper {
             });
 
         if let Some((ref mut app_name, ref mut opts)) = self.editing {
-            // Do not auto-populate if the input becomes completely empty.
-            let x = self.theme.get_px_value("env-input", "x")
+            let x = self
+                .theme
+                .get_px_value("env-input", "x")
                 .unwrap_or((ctx.input(|i| i.screen_rect().width()) - 300.0) / 2.0);
-            let y = self.theme.get_px_value("env-input", "y")
+            let y = self
+                .theme
+                .get_px_value("env-input", "y")
                 .unwrap_or((ctx.input(|i| i.screen_rect().height()) - 200.0) / 2.0);
-            let env_input_bg = self.theme.get_style("env-input", "background-color")
+            let env_input_bg = self
+                .theme
+                .get_style("env-input", "background-color")
                 .and_then(|s| self.theme.parse_color(&s))
                 .unwrap_or(eframe::egui::Color32::TRANSPARENT);
+
             let mut save = false;
             let mut cancel = false;
+
             let area = eframe::egui::Area::new("env-input".to_string().into())
                 .order(eframe::egui::Order::Foreground)
                 .movable(true)
@@ -892,7 +1139,7 @@ impl eframe::App for EframeWrapper {
             area.show(ctx, |ui| {
                 if let (Some(w), Some(h)) = (
                     self.theme.get_px_value("env-input", "width"),
-                    self.theme.get_px_value("env-input", "height")
+                    self.theme.get_px_value("env-input", "height"),
                 ) {
                     ui.set_min_size(eframe::egui::vec2(w, h));
                     ui.set_max_size(eframe::egui::vec2(w, h));
@@ -903,9 +1150,11 @@ impl eframe::App for EframeWrapper {
                         ui.add_space(4.0);
                         with_alignment(ui, &self.theme, "env-input", |ui| {
                             self.theme.apply_style(ui, "env-input");
-                            ui.add(eframe::egui::TextEdit::singleline(opts)
-                                .hint_text("Enter env variables...")
-                                .frame(false));
+                            ui.add(
+                                eframe::egui::TextEdit::singleline(opts)
+                                    .hint_text("Enter env variables...")
+                                    .frame(false),
+                            );
                         });
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
