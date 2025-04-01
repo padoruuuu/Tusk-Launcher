@@ -6,7 +6,7 @@ Reccomendations for features or bug reports are appreciated but if you are good 
 
 what it looks like with default theme.css:
 
-![image](https://github.com/user-attachments/assets/e9c93c42-22fc-4c34-af80-cf8b2ea7936b)
+![image](https://github.com/user-attachments/assets/1c9462c7-0d7f-4194-97b9-b8a1ed05a641)
 
 
 #INSTALLATION
