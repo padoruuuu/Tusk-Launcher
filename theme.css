@@ -3,35 +3,35 @@
 /* Main Window */
 .main-window {
     background-color: rgba(0, 0, 0, 0.9);
-    width: 300px;
+    width: 200px;
     height: 200px;
 }
 
 /* Search Bar */
 .search-bar {
-    x: 60px;
+    x: 20px;
     y: 10px;
     width: 150px;
     height: 25px;
     background-color: rgba(59, 66, 82, 1);
     hover-background-color: rgba(76, 86, 106, 1);
-    border-radius: 6px;
+    border-radius: 0px;
     text-color: rgba(236, 239, 244, 1);
     hover-text-color: rgba(236, 239, 244, 1);
-    padding: 4px;
+    padding: 0px;
     font-size: 12px;
 }
 
 /* App List */
 .app-list {
-    x: 62px;
-    y: 40px;
+    x: 2px;
+    y: 35px;
     width: 109px;
     height: 108px;
     background-color: rgba(46, 52, 64, 1);
-    padding: 1px;
+    padding: 0px;
+    border-radius: 0px;
 }
-
 
 /* App Button (used with custom_button for launching apps) */
 .app-button {
@@ -39,14 +39,34 @@
     hover-background-color: rgba(102, 138, 196, 1);
     text-color: rgba(236, 239, 244, 1);
     hover-text-color: rgba(236, 239, 244, 1);
-    border-radius: 4px;
-    padding: 3px;
-    font-size: 14px;
+    border-radius: 0px;
+    padding: 0px;
+    font-size: 12px;
+    order: 2;
+}
+
+/* App Icon (new style for icons in the app list) */
+.app-icon {
+    width: 18px;
+    height: 18px;
+    order: 1;
+}
+
+/* Settings Button */
+.settings-button {
+    width: 22px;
+    height: 22px;
+    hover-text-color: rgba(102, 138, 196, 0.5);
+    text-color: rgba(122, 162, 247, 1);
+    font-size: 16px;
+    x-offset: 10px;
+    y-offset: -3px;
+    order: 0;
 }
 
 /* Time Display */
 .time-display {
-    x: 72px;
+    x: 30px;
     y: 160px;
     width: 200px;
     height: 50px;
@@ -71,7 +91,7 @@
 
 /* Power Button (used with custom_button for power options) */
 .power-button {
-    x: 60px;
+    x: 20px;
     y: 190px;
     width: 65px;
     height: 15px;
@@ -79,7 +99,8 @@
     hover-background-color: rgba(102, 138, 196, 1);
     text-color: rgba(236, 239, 244, 1);
     hover-text-color: rgba(236, 239, 244, 1);
-    border-radius: 4px;
+    border-radius: 0px;
+    padding: 0px;
 }
 
 /* Edit Button (used with custom_button for Save/Cancel in env window) */
@@ -88,8 +109,8 @@
     hover-background-color: rgba(102, 138, 196, 1);
     text-color: rgba(236, 239, 244, 1);
     hover-text-color: rgba(236, 239, 244, 1);
-    border-radius: 4px;
-    padding: 3px;
+    border-radius: 0px;
+    padding: 0px;
     font-size: 12px;
 }
 
@@ -98,38 +119,26 @@
     background-color: rgba(59, 66, 82, 1);
     text-color: rgba(236, 239, 244, 1);
     hover-text-color: rgba(236, 239, 244, 1);
-    padding: 6px;
+    padding: 0px;
     font-size: 12px;
-    border-radius: 4px;
-    width: 250px;
+    border-radius: 0px;
+    width: 150px;
     height: 50px;
 }
 
-/* Settings Button */
-.settings-button {
-    width: 22px;
-    height: 22px;
-    hover-text-color: rgba(102, 138, 196, 0.5);
-    text-color: rgba(122, 162, 247, 1);
-    font-size: 16px;
-    x-offset: -3px;
-    y-offset: 0px;
-}
-
-
+/* Config settings */
 .config {
     enable_recent_apps: true;
     max_search_results: 5;
     enable_power_options: true;
     show_time: true;
     time_format: "%I:%M %p";
-    time_order: HdyHms;
+    time_order: MdyHms;
     enable_audio_control: false;
     max_volume: 1.5;
     volume_update_interval_ms: 500;
     power_commands: systemctl poweroff, loginctl poweroff, poweroff, halt;
     restart_commands: systemctl reboot, loginctl reboot, reboot;
     logout_commands: loginctl terminate-session $XDG_SESSION_ID, hyprctl dispatch exit, swaymsg exit, gnome-session-quit --logout --no-prompt, qdbus org.kde.ksmserver /KSMServer logout 0 0 0;
-    enable_icons: false;
-    icon_cache_dir: "/home/zeakz/.config/tusk-launcher/icons";
+    enable_icons: true;
 }
