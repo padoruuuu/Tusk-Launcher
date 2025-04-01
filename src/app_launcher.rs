@@ -173,8 +173,9 @@ impl Default for AppLauncher {
                 .lock()
                 .ok()
                 .map(|cache| {
-                    cache.recent_apps.iter()
-                        .filter_map(|app| applications.iter().find(|(name, _, _)| name == app).cloned())
+                    cache.apps.iter()
+                        .map(|(name, _)| name.clone())
+                        .filter_map(|app_name| applications.iter().find(|(name, _, _)| name == &app_name).cloned())
                         .take(config.max_search_results)
                         .collect()
                 })
@@ -226,8 +227,9 @@ impl AppInterface for AppLauncher {
                         .lock()
                         .ok()
                         .map(|cache| {
-                            cache.recent_apps.iter()
-                                .filter_map(|app| self.applications.iter().find(|(name, _, _)| name == app).cloned())
+                            cache.apps.iter()
+                                .map(|(name, _)| name.clone())
+                                .filter_map(|app_name| self.applications.iter().find(|(name, _, _)| name == &app_name).cloned())
                                 .take(self.config.max_search_results)
                                 .collect()
                         })
