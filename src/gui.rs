@@ -11,19 +11,18 @@ use eframe;
 use serde::{Deserialize, Serialize};
 use xdg;
 
-const DEFAULT_THEME: &str = r#"/* Centered Streamlined Compact Theme with Absolute Positioning */
-.main-window { background-color: rgba(0, 0, 0, 0.9); width: 300px; height: 200px; }
-.search-bar { x: 60px; y: 10px; width: 150px; height: 25px; background-color: rgba(59, 66, 82, 1); hover-background-color: rgba(76, 86, 106, 1); border-radius: 6px; text-color: rgba(236, 239, 244, 1); hover-text-color: rgba(236, 239, 244, 1); padding: 4px; font-size: 12px; }
-.app-list { x: 62px; y: 40px; width: 109px; height: 108px; background-color: rgba(46, 52, 64, 1); padding: 1px; }
-.app-button { background-color: rgba(122, 162, 247, 1); hover-background-color: rgba(102, 138, 196, 1); text-color: rgba(236, 239, 244, 1); hover-text-color: rgba(236, 239, 244, 1); border-radius: 4px; padding: 3px; font-size: 14px; order: 2; }
-.app-icon { width: 22px; height: 22px; order: 1; }
-.settings-button { width: 22px; height: 22px; hover-text-color: rgba(102, 138, 196, 0.5); text-color: rgba(122, 162, 247, 1); font-size: 16px; x-offset: -10px; y-offset: 0px; order: 0; }
-.time-display { x: 72px; y: 160px; width: 200px; height: 50px; background-color: rgba(46, 52, 64, 1); text-color: rgba(236, 239, 244, 1); hover-text-color: rgba(236, 239, 244, 1); text-align: center; }
-.volume-slider { x: 40px; y: 155px; width: 200px; height: 50px; background-color: rgba(46, 52, 64, 1); hover-background-color: rgba(67, 76, 94, 1); text-color: rgba(236, 239, 244, 1); hover-text-color: rgba(236, 239, 244, 1); border-radius: 4px; }
-.power-button { x: 60px; y: 190px; width: 65px; height: 15px; background-color: rgba(122, 162, 247, 1); hover-background-color: rgba(102, 138, 196, 1); text-color: rgba(236, 239, 244, 1); hover-text-color: rgba(236, 239, 244, 1); border-radius: 4px; }
-.edit-button { background-color: rgba(122, 162, 247, 1); hover-background-color: rgba(102, 138, 196, 1); text-color: rgba(236, 239, 244, 1); hover-text-color: rgba(236, 239, 244, 1); border-radius: 4px; padding: 3px; font-size: 12px; }
-.env-input { background-color: rgba(59, 66, 82, 1); text-color: rgba(236, 239, 244, 1); hover-text-color: rgba(236, 239, 244, 1); padding: 6px; font-size: 12px; border-radius: 4px; width: 250px; height: 50px; }
-.config { enable_recent_apps: true; max_search_results: 5; enable_power_options: true; show_time: true; time_format: "%I:%M %p"; time_order: MdyHms; enable_audio_control: true; max_volume: 1.5; volume_update_interval_ms: 500; power_commands: systemctl poweroff, loginctl poweroff, poweroff, halt; restart_commands: systemctl reboot, loginctl reboot, reboot; logout_commands: loginctl terminate-session $XDG_SESSION_ID, hyprctl dispatch exit, swaymsg exit, gnome-session-quit --logout --no-prompt, qdbus org.kde.ksmserver /KSMServer logout 0 0 0; icon_cache_dir: "/home/zeakz/.config/tusk-launcher/icons"; }
+const DEFAULT_THEME: &str = r#".main-window {background-color: rgba(0,0,0,0.9);width:200px;height:200px;}
+.search-bar {x:20px;y:10px;width:150px;height:25px;background-color:rgba(59,66,82,1);hover-background-color:rgba(76,86,106,1);border-radius:0px;text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);padding:0px;font-size:12px;}
+.app-list {x:2px;y:35px;width:109px;height:108px;background-color:rgba(46,52,64,1);padding:0px;border-radius:0px;}
+.app-button {background-color:rgba(122,162,247,1);hover-background-color:rgba(102,138,196,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);border-radius:0px;padding:0px;font-size:12px;order:2;}
+.app-icon {width:18px;height:18px;order:1;}
+.settings-button {width:22px;height:22px;hover-text-color:rgba(102,138,196,0.5);text-color:rgba(122,162,247,1);font-size:16px;x-offset:10px;y-offset:-3px;order:0;}
+.time-display {x:30px;y:160px;width:200px;height:50px;background-color:rgba(46,52,64,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);text-align:center;}
+.volume-slider {x:40px;y:155px;width:200px;height:50px;background-color:rgba(46,52,64,1);hover-background-color:rgba(67,76,94,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);border-radius:4px;}
+.power-button {x:20px;y:190px;width:65px;height:15px;background-color:rgba(122,162,247,1);hover-background-color:rgba(102,138,196,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);border-radius:0px;padding:0px;}
+.edit-button {background-color:rgba(122,162,247,1);hover-background-color:rgba(102,138,196,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);border-radius:0px;padding:0px;font-size:12px;}
+.env-input {background-color:rgba(59,66,82,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);padding:0px;font-size:12px;border-radius:0px;width:150px;height:50px;}
+.config {enable_recent_apps:true;max_search_results:5;enable_power_options:true;show_time:true;time_format:"%I:%M %p";time_order:MdyHms;enable_audio_control:false;max_volume:1.5;volume_update_interval_ms:500;power_commands:systemctl poweroff,loginctl poweroff,poweroff,halt;restart_commands:systemctl reboot,loginctl reboot,reboot;logout_commands:loginctl terminate-session $XDG_SESSION_ID,hyprctl dispatch exit,swaymsg exit,gnome-session-quit --logout --no-prompt,qdbus org.kde.ksmserver /KSMServer logout 0 0 0;enable_icons:false;}
 "#;
 
 fn remove_comments(css: &str) -> String {
@@ -219,10 +218,12 @@ impl Theme {
             if let Some(val) = rule.props.get("power_commands") { config.power_commands = val.split(',').map(|s| s.trim().to_string()).collect(); }
             if let Some(val) = rule.props.get("restart_commands") { config.restart_commands = val.split(',').map(|s| s.trim().to_string()).collect(); }
             if let Some(val) = rule.props.get("logout_commands") { config.logout_commands = val.split(',').map(|s| s.trim().to_string()).collect(); }
+            update_field!("enable_icons", enable_icons, bool);
             if let Some(val) = rule.props.get("icon_cache_dir") {
                 let trimmed = val.trim().trim_matches('"');
-                if trimmed.is_empty() { config.enable_icons = false; }
-                else { config.icon_cache_dir = PathBuf::from(trimmed); config.enable_icons = true; }
+                if !trimmed.is_empty() {
+                    config.icon_cache_dir = PathBuf::from(trimmed);
+                }
             }
         }
         config
@@ -540,12 +541,15 @@ impl EframeWrapper {
                                 }
                             }
                             "icon" => {
-                                if let Some(icon_path) = self.app.get_icon_path(&app_name) {
-                                    let icon_w = self.theme.get_px_value("app-icon", "width").unwrap_or(22.0);
-                                    let icon_h = self.theme.get_px_value("app-icon", "height").unwrap_or(22.0);
-                                    let (icon_rect, _) = ui.allocate_exact_size(eframe::egui::vec2(icon_w, icon_h), eframe::egui::Sense::hover());
-                                    if let Some(tex) = self.icon_manager.get_texture(ctx, &icon_path) {
-                                        ui.painter().image(tex.id(), icon_rect, eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0)), eframe::egui::Color32::WHITE);
+                                // Only render icon if enabled in the config
+                                if cfg.enable_icons {
+                                    if let Some(icon_path) = self.app.get_icon_path(&app_name) {
+                                        let icon_w = self.theme.get_px_value("app-icon", "width").unwrap_or(22.0);
+                                        let icon_h = self.theme.get_px_value("app-icon", "height").unwrap_or(22.0);
+                                        let (icon_rect, _) = ui.allocate_exact_size(eframe::egui::vec2(icon_w, icon_h), eframe::egui::Sense::hover());
+                                        if let Some(tex) = self.icon_manager.get_texture(ctx, &icon_path) {
+                                            ui.painter().image(tex.id(), icon_rect, eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0)), eframe::egui::Color32::WHITE);
+                                        }
                                     }
                                 }
                             }
@@ -608,8 +612,14 @@ impl eframe::App for EframeWrapper {
             .or_else(|| self.theme.get_style("env-input", "background-color"))
             .and_then(|s| self.theme.parse_color(&s))
             .unwrap_or(eframe::egui::Color32::BLACK);
-        let main_w = self.theme.get_px_value("main-window", "width").map(|w| if w < 0.0 { 300.0 } else { w }).unwrap_or(300.0);
-        let main_h = self.theme.get_px_value("main-window", "height").map(|h| if h < 0.0 { 200.0 } else { h }).unwrap_or(200.0);
+        
+        // Properly get main window dimensions from theme.css
+        let main_w = self.theme.get_px_value("main-window", "width").unwrap_or(300.0);
+        let main_h = self.theme.get_px_value("main-window", "height").unwrap_or(200.0);
+        
+        // Set the window size using viewport command
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(main_w, main_h)));
+        
         eframe::egui::Area::new("main-window".into())
             .fixed_pos(eframe::egui::pos2(0.0, 0.0))
             .show(ctx, |ui| {
