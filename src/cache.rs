@@ -225,10 +225,9 @@ pub fn update_recent_apps(
         .position(|(name, _)| name == app_name)
         .map(|pos| cache.apps.remove(pos).1);
     let entry = existing_entry.unwrap_or_default();
+    // Insert at the beginning to mark as most recent.
     cache.apps.insert(0, (app_name.to_owned(), entry));
-    if cache.apps.len() > 10 {
-        cache.apps.truncate(10);
-    }
+    // Removed cache truncation so that all cached apps persist.
     save_cache(&cache)?;
     Ok(())
 }
