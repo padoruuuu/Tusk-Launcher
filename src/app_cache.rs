@@ -357,12 +357,69 @@ pub fn resolve_icon_path(app_name: &str, icon_name: &str, config: &crate::gui::C
     search_paths.append(&mut pixmaps_paths);
     search_paths.push(PathBuf::from("/usr/share/pixmaps"));
 
+    // Add Steam-specific icon paths
+    if let Ok(home) = std::env::var("HOME") {
+        // Common Steam installation directory
+        let steam_base = PathBuf::from(home).join(".local/share/Steam");
+        
+        // Steam icon locations
+        search_paths.push(steam_base.join("steam/games"));
+        search_paths.push(steam_base.join("steam/cached/game_icons"));
+        search_paths.push(steam_base.join("appcache/librarycache"));
+    }
+
     let icon_themes = ["hicolor", "Adwaita", "gnome", "breeze", "oxygen"];
     let icon_sizes = [
         "512x512", "256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "16x16", "scalable",
     ];
     let categories = ["apps", "devices", "places", "mimetypes", "status", "actions"];
-    let extensions = ["png", "svg", "xpm"];
+    let extensions = ["png", "svg", "xpm", "jpg", "jpeg", "ico"]; // Added common Steam icon extensions
+
+    // Check for direct icon path first (often used by Steam)
+    if Path::new(icon_name).exists() {
+        if let Ok(mut cache) = APP_CACHE.lock() {
+            if let Some(pos) = cache.apps.iter().position(|(key, _)| key == app_name) {
+                cache.apps[pos].1.icon_directory = Some(icon_name.to_string());
+            } else {
+                let mut entry = AppEntry::default();
+                entry.icon_directory = Some(icon_name.to_string());
+                cache.apps.push((app_name.to_owned(), entry));
+            }
+            let _ = save_cache(&cache);
+        }
+        return Some(icon_name.to_string());
+    }
+
+    // Check for Steam-specific icon patterns
+    let steam_icon_patterns = [
+        format!("{}_header.jpg", icon_name),
+        format!("{}_library_600x900.jpg", icon_name),
+        format!("{}_library.png", icon_name),
+        format!("{}_icon.png", icon_name),
+        format!("{}.png", icon_name),
+        format!("{}.jpg", icon_name),
+        format!("{}.ico", icon_name),
+    ];
+
+    // Try to find Steam icons first
+    for path in &search_paths {
+        for pattern in &steam_icon_patterns {
+            let full_path = path.join(pattern);
+            if full_path.exists() {
+                if let Ok(mut cache) = APP_CACHE.lock() {
+                    if let Some(pos) = cache.apps.iter().position(|(key, _)| key == app_name) {
+                        cache.apps[pos].1.icon_directory = full_path.to_str().map(String::from);
+                    } else {
+                        let mut entry = AppEntry::default();
+                        entry.icon_directory = full_path.to_str().map(String::from);
+                        cache.apps.push((app_name.to_owned(), entry));
+                    }
+                    let _ = save_cache(&cache);
+                }
+                return full_path.to_str().map(String::from);
+            }
+        }
+    }
 
     let check_icon = |base: &Path, theme: &str, size: &str, category: &str, icon: &str| -> Option<PathBuf> {
         let dir = base.join(theme).join(size).join(category);
@@ -375,6 +432,7 @@ pub fn resolve_icon_path(app_name: &str, icon_name: &str, config: &crate::gui::C
         None
     };
 
+    // Try standard icon search for non-Steam icons
     let found = search_paths.iter().find_map(|base| {
         icon_themes.iter().find_map(|theme| {
             icon_sizes.iter().find_map(|size| {
