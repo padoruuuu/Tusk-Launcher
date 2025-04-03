@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::Mutex,
@@ -7,14 +7,13 @@ use std::{
 };
 
 use once_cell::sync::Lazy;
-use serde::{Deserialize, Serialize};
-
 use eframe::egui;
 use image;
 use resvg::{tiny_skia::Pixmap, usvg};
 
 use crate::{app_launcher::AppLaunchOptions, gui::Config};
 use xdg::BaseDirectories;
+use serde::{Serialize, Deserialize};
 
 static CACHE_FILE: Lazy<PathBuf> = Lazy::new(|| {
     let xdg = BaseDirectories::new()
@@ -22,28 +21,22 @@ static CACHE_FILE: Lazy<PathBuf> = Lazy::new(|| {
         .unwrap_or_else(|_| PathBuf::from("."));
     let mut path = xdg.join("tusk-launcher");
     fs::create_dir_all(&path).expect("Failed to create config directory");
-    path.push("app_cache.toml");
+    // Using our custom .txt file format
+    path.push("app_cache.txt");
     path
 });
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct AppEntry {
     pub launch_options: Option<AppLaunchOptions>,
+    /// Holds the full resolved icon path (or empty if not set)
     pub icon_directory: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct AppCache {
-    /// Maps app names to their entries, ordered by recency
+    /// Each entry is keyed by the application name.
     pub apps: Vec<(String, AppEntry)>,
-}
-
-impl Default for AppCache {
-    fn default() -> Self {
-        Self {
-            apps: Vec::new(),
-        }
-    }
 }
 
 #[derive(Default)]
@@ -119,80 +112,106 @@ impl IconManager {
     }
 }
 
+// Helpers for escaping/unescaping strings in our custom text format.
+fn escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+     .replace('\t', "\\t")
+     .replace('\n', "\\n")
+}
+
+fn unescape(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(next) = chars.next() {
+                match next {
+                    '\\' => result.push('\\'),
+                    't' => result.push('\t'),
+                    'n' => result.push('\n'),
+                    other => {
+                        result.push('\\');
+                        result.push(other);
+                    }
+                }
+            } else {
+                result.push('\\');
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+// Using our custom text format for now.
+fn serialize_cache(cache: &AppCache) -> String {
+    let mut s = String::from("APP_CACHE_V1\n");
+    for (app_name, entry) in &cache.apps {
+        let name_escaped = escape(app_name);
+        let launch_options_escaped = entry.launch_options
+            .as_ref()
+            .map(|opts| escape(&opts.to_string()))
+            .unwrap_or_default();
+        let icon_escaped = entry.icon_directory
+            .as_ref()
+            .map(|s| escape(s))
+            .unwrap_or_default();
+        s.push_str(&format!("{}\t{}\t{}\n", name_escaped, launch_options_escaped, icon_escaped));
+    }
+    s
+}
+
+fn deserialize_cache(s: &str) -> Result<AppCache, Box<dyn std::error::Error>> {
+    let mut lines = s.lines();
+    let header = lines.next().ok_or("Empty cache file")?;
+    if header != "APP_CACHE_V1" {
+        return Err("Unsupported cache file version".into());
+    }
+    let mut cache = AppCache::default();
+    for line in lines {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() != 3 {
+            continue;
+        }
+        let app_name = unescape(parts[0]);
+        let launch_options = if parts[1].is_empty() {
+            None
+        } else {
+            Some(parts[1].parse()?)
+        };
+        let icon_directory = if parts[2].is_empty() {
+            None
+        } else {
+            Some(unescape(parts[2]))
+        };
+        cache.apps.push((app_name, AppEntry { launch_options, icon_directory }));
+    }
+    Ok(cache)
+}
+
 fn save_cache(cache: &AppCache) -> Result<(), Box<dyn std::error::Error>> {
-    fs::write(&*CACHE_FILE, toml::to_string_pretty(cache)?)?;
+    let data = serialize_cache(cache);
+    fs::write(&*CACHE_FILE, data)?;
     Ok(())
 }
 
 pub static APP_CACHE: Lazy<Mutex<AppCache>> = Lazy::new(|| {
-    Mutex::new(
-        if CACHE_FILE.exists() {
-            // Try to load the new format
-            match toml::from_str::<AppCache>(&fs::read_to_string(&*CACHE_FILE).expect("Failed to read cache file")) {
-                Ok(cache) => cache,
-                Err(_) => {
-                    // If it fails, try to load the old format and convert
-                    #[derive(Deserialize)]
-                    struct OldAppCache {
-                        recent_apps: VecDeque<String>,
-                        launch_options: HashMap<String, AppLaunchOptions>,
-                        icon_directories: HashMap<String, String>,
-                    }
-
-                    match toml::from_str::<OldAppCache>(&fs::read_to_string(&*CACHE_FILE).expect("Failed to read cache file")) {
-                        Ok(old_cache) => {
-                            // Convert old format to new format
-                            let mut new_cache = AppCache::default();
-                            
-                            // Add entries for all apps that have either launch options or icon directories
-                            let mut all_apps: Vec<String> = old_cache.launch_options.keys().cloned().collect();
-                            all_apps.extend(old_cache.icon_directories.keys().cloned());
-                            all_apps.sort();
-                            all_apps.dedup();
-                            
-                            // First add apps that are in the recent_apps list, in order
-                            for app_name in old_cache.recent_apps.iter() {
-                                if !new_cache.apps.iter().any(|(name, _)| name == app_name) {
-                                    let entry = AppEntry {
-                                        launch_options: old_cache.launch_options.get(app_name).cloned(),
-                                        icon_directory: old_cache.icon_directories.get(app_name).cloned(),
-                                    };
-                                    new_cache.apps.push((app_name.clone(), entry));
-                                }
-                            }
-                            
-                            // Then add any remaining apps
-                            for app_name in all_apps {
-                                if !new_cache.apps.iter().any(|(name, _)| name == &app_name) {
-                                    let entry = AppEntry {
-                                        launch_options: old_cache.launch_options.get(&app_name).cloned(),
-                                        icon_directory: old_cache.icon_directories.get(&app_name).cloned(),
-                                    };
-                                    new_cache.apps.push((app_name, entry));
-                                }
-                            }
-                            
-                            // Save the converted cache immediately
-                            let _ = save_cache(&new_cache);
-                            new_cache
-                        },
-                        Err(_) => AppCache::default(),
-                    }
-                }
+    let cache = if CACHE_FILE.exists() {
+        match fs::read_to_string(&*CACHE_FILE)
+            .ok()
+            .and_then(|s| deserialize_cache(&s).ok()) {
+                Some(c) => c,
+                None => AppCache::default(),
             }
-        } else {
-            AppCache::default()
-        },
-    )
+    } else {
+        AppCache::default()
+    };
+    Mutex::new(cache)
 });
-
-/// Get a list of recent app names in order from most to least recent
-pub fn get_recent_apps() -> Vec<String> {
-    APP_CACHE
-        .lock()
-        .map(|c| c.apps.iter().map(|(name, _)| name.clone()).collect())
-        .unwrap_or_default()
-}
 
 pub fn update_recent_apps(
     app_name: &str,
@@ -201,25 +220,15 @@ pub fn update_recent_apps(
     if !enable_recent_apps {
         return Ok(());
     }
-
     let mut cache = APP_CACHE.lock().map_err(|e| format!("Lock error: {:?}", e))?;
-    
-    // Remove existing entry if present
     let existing_entry = cache.apps.iter()
         .position(|(name, _)| name == app_name)
         .map(|pos| cache.apps.remove(pos).1);
-    
-    // Create or reuse app entry
     let entry = existing_entry.unwrap_or_default();
-    
-    // Add to the front (most recent)
     cache.apps.insert(0, (app_name.to_owned(), entry));
-    
-    // Trim if needed
     if cache.apps.len() > 10 {
         cache.apps.truncate(10);
     }
-    
     save_cache(&cache)?;
     Ok(())
 }
@@ -229,20 +238,14 @@ pub fn update_launch_options(
     options: AppLaunchOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut cache = APP_CACHE.lock().map_err(|e| format!("Lock error: {:?}", e))?;
-    
-    // Find existing entry or position to insert new entry
     let pos = cache.apps.iter().position(|(name, _)| name == app_name);
-    
     if let Some(pos) = pos {
-        // Update existing entry
         cache.apps[pos].1.launch_options = Some(options);
     } else {
-        // Create new entry
         let mut entry = AppEntry::default();
         entry.launch_options = Some(options);
         cache.apps.push((app_name.to_owned(), entry));
     }
-    
     save_cache(&cache)?;
     Ok(())
 }
@@ -260,56 +263,31 @@ pub fn get_launch_options() -> HashMap<String, AppLaunchOptions> {
         .unwrap_or_default()
 }
 
-/// Resolves an icon path by first checking the cached directory path stored in app_cache.toml.
-/// If not cached, searches using XDG directories and updates the app cache with the directory.
-pub fn resolve_icon_path(icon_name: &str, config: &Config) -> Option<String> {
+/// Resolves an icon path for an application by searching XDG directories for the full icon file.
+/// If found, updates the same app entry with the full path so that subsequent lookups need not re-search.
+pub fn resolve_icon_path(app_name: &str, icon_name: &str, config: &Config) -> Option<String> {
     if icon_name.is_empty() || !config.enable_icons {
         return None;
     }
-    let icon_path = Path::new(icon_name);
-    if icon_path.is_absolute() {
-        return Some(icon_name.to_owned());
-    }
-
-    // Check for an already cached directory in the app cache
     {
         let cache = APP_CACHE.lock().ok()?;
-        for (_, entry) in &cache.apps {
-            if let Some(dir_path) = &entry.icon_directory {
-                let extensions = ["png", "svg", "xpm"];
-                for ext in &extensions {
-                    let full_path = Path::new(dir_path).join(format!("{}.{}", icon_name, ext));
-                    if full_path.exists() {
-                        return full_path.to_str().map(String::from);
-                    }
+        if let Some((_, entry)) = cache.apps.iter().find(|(key, _)| key == app_name) {
+            if let Some(ref cached_icon) = entry.icon_directory {
+                if Path::new(cached_icon).exists() {
+                    return Some(cached_icon.clone());
                 }
             }
         }
     }
-
-    // Get XDG base directories
-    let xdg = match BaseDirectories::new() {
-        Ok(xdg) => xdg,
-        Err(_) => return None,
-    };
-
-    // Build search paths using XDG directories
+    let xdg = BaseDirectories::new().ok()?;
     let mut search_paths = Vec::new();
     search_paths.push(xdg.get_data_home().join("flatpak/exports/share/icons"));
     for data_dir in xdg.get_data_dirs() {
         search_paths.push(data_dir.join("icons"));
     }
     search_paths.push(PathBuf::from("/var/lib/flatpak/exports/share/icons"));
-    
-    // Use XDG data dirs for pixmaps too if possible
-    let pixmaps_paths: Vec<PathBuf> = xdg
-        .get_data_dirs()
-        .into_iter()
-        .map(|dir| dir.join("pixmaps"))
-        .collect();
-    search_paths.extend(pixmaps_paths);
-    
-    // Fallback to standard pixmaps location if not found in XDG dirs
+    let mut pixmaps_paths: Vec<PathBuf> = xdg.get_data_dirs().into_iter().map(|dir| dir.join("pixmaps")).collect();
+    search_paths.append(&mut pixmaps_paths);
     search_paths.push(PathBuf::from("/usr/share/pixmaps"));
 
     let icon_themes = ["hicolor", "Adwaita", "gnome", "breeze", "oxygen"];
@@ -319,18 +297,17 @@ pub fn resolve_icon_path(icon_name: &str, config: &Config) -> Option<String> {
     let categories = ["apps", "devices", "places", "mimetypes", "status", "actions"];
     let extensions = ["png", "svg", "xpm"];
 
-    let check_icon = |base: &Path, theme: &str, size: &str, category: &str, icon: &str| -> Option<(PathBuf, PathBuf)> {
+    let check_icon = |base: &Path, theme: &str, size: &str, category: &str, icon: &str| -> Option<PathBuf> {
         let dir = base.join(theme).join(size).join(category);
         for ext in &extensions {
             let p = dir.join(format!("{}.{}", icon, ext));
-            if p.exists() { 
-                return Some((p, dir.clone()));
+            if p.exists() {
+                return Some(p);
             }
         }
         None
     };
 
-    // Search for the icon in the provided search paths
     let found = search_paths.iter().find_map(|base| {
         icon_themes.iter().find_map(|theme| {
             icon_sizes.iter().find_map(|size| {
@@ -339,117 +316,18 @@ pub fn resolve_icon_path(icon_name: &str, config: &Config) -> Option<String> {
         })
     });
 
-    if let Some((found_path, dir_path)) = found {
-        // Cache the directory where the icon was found
+    if let Some(found_path) = found {
         if let Ok(mut cache) = APP_CACHE.lock() {
-            if let Some(dir_str) = dir_path.to_str() {
-                // First, try to find if there's an existing app with this exact name
-                let app_pos = cache.apps.iter().position(|(name, _)| name == icon_name);
-                
-                if let Some(pos) = app_pos {
-                    // Update existing entry
-                    cache.apps[pos].1.icon_directory = Some(dir_str.to_owned());
-                } else {
-                    // Look for app name variants
-                    // Common pattern is "org.app.Name" vs "Name"
-                    let stripped_name = if icon_name.contains('.') {
-                        icon_name.split('.').last().unwrap_or(icon_name)
-                    } else {
-                        icon_name
-                    };
-                    
-                    // Try to find an app with a matching name (either full or base name)
-                    let related_app_pos = cache.apps.iter().position(|(name, _)| {
-                        if name == icon_name {
-                            return true;
-                        }
-                        
-                        if name.contains('.') && name.split('.').last().unwrap_or("") == stripped_name {
-                            return true;
-                        }
-                        
-                        if icon_name.contains('.') && icon_name.split('.').last().unwrap_or("") == name {
-                            return true;
-                        }
-                        
-                        false
-                    });
-                    
-                    if let Some(pos) = related_app_pos {
-                        // Update existing related entry
-                        cache.apps[pos].1.icon_directory = Some(dir_str.to_owned());
-                    } else {
-                        // Create new entry if no related app found
-                        let mut entry = AppEntry::default();
-                        entry.icon_directory = Some(dir_str.to_owned());
-                        cache.apps.push((icon_name.to_owned(), entry));
-                    }
-                }
-                
-                let _ = save_cache(&cache);
+            if let Some(pos) = cache.apps.iter().position(|(key, _)| key == app_name) {
+                cache.apps[pos].1.icon_directory = found_path.to_str().map(String::from);
+            } else {
+                let mut entry = AppEntry::default();
+                entry.icon_directory = found_path.to_str().map(String::from);
+                cache.apps.push((app_name.to_owned(), entry));
             }
+            let _ = save_cache(&cache);
         }
         return found_path.to_str().map(String::from);
     }
-
-    // Fallback to searching directly in pixmaps directories
-    for pixmap_dir in search_paths.iter().filter(|p| p.to_str().map_or(false, |s| s.contains("pixmaps"))) {
-        for ext in &extensions {
-            let p = pixmap_dir.join(format!("{}.{}", icon_name, ext));
-            if p.exists() {
-                // Cache the pixmaps directory
-                if let Ok(mut cache) = APP_CACHE.lock() {
-                    if let Some(dir_str) = pixmap_dir.to_str() {
-                        // First, try to find if there's an existing app with this exact name
-                        let app_pos = cache.apps.iter().position(|(name, _)| name == icon_name);
-                        
-                        if let Some(pos) = app_pos {
-                            // Update existing entry
-                            cache.apps[pos].1.icon_directory = Some(dir_str.to_owned());
-                        } else {
-                            // Look for app name variants
-                            // Common pattern is "org.app.Name" vs "Name"
-                            let stripped_name = if icon_name.contains('.') {
-                                icon_name.split('.').last().unwrap_or(icon_name)
-                            } else {
-                                icon_name
-                            };
-                            
-                            // Try to find an app with a matching name (either full or base name)
-                            let related_app_pos = cache.apps.iter().position(|(name, _)| {
-                                if name == icon_name {
-                                    return true;
-                                }
-                                
-                                if name.contains('.') && name.split('.').last().unwrap_or("") == stripped_name {
-                                    return true;
-                                }
-                                
-                                if icon_name.contains('.') && icon_name.split('.').last().unwrap_or("") == name {
-                                    return true;
-                                }
-                                
-                                false
-                            });
-                            
-                            if let Some(pos) = related_app_pos {
-                                // Update existing related entry
-                                cache.apps[pos].1.icon_directory = Some(dir_str.to_owned());
-                            } else {
-                                // Create new entry if no related app found
-                                let mut entry = AppEntry::default();
-                                entry.icon_directory = Some(dir_str.to_owned());
-                                cache.apps.push((icon_name.to_owned(), entry));
-                            }
-                        }
-                        
-                        let _ = save_cache(&cache);
-                    }
-                }
-                return p.to_str().map(String::from);
-            }
-        }
-    }
-    
     None
 }

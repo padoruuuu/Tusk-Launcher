@@ -3,6 +3,7 @@ use std::{
     fs,
     path::PathBuf,
     process::{Command, Stdio},
+    str::FromStr,
 };
 
 use xdg::BaseDirectories;
@@ -19,6 +20,45 @@ pub struct AppLaunchOptions {
     pub custom_command: Option<String>,
     pub working_directory: Option<String>,
     pub environment_vars: HashMap<String, String>,
+}
+
+// Implement Display for AppLaunchOptions so we can convert to a string for caching.
+impl std::fmt::Display for AppLaunchOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         let custom = self.custom_command.as_deref().unwrap_or("");
+         let working = self.working_directory.as_deref().unwrap_or("");
+         let env_str = self.environment_vars.iter()
+             .map(|(k, v)| format!("{}={}", k, v))
+             .collect::<Vec<_>>()
+             .join(",");
+         write!(f, "{}|{}|{}", custom, working, env_str)
+    }
+}
+
+// Implement FromStr for AppLaunchOptions to parse from the cached string.
+impl FromStr for AppLaunchOptions {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+         let parts: Vec<&str> = s.splitn(3, '|').collect();
+         if parts.len() != 3 {
+             return Err("Invalid format for AppLaunchOptions".to_string());
+         }
+         let custom = if parts[0].is_empty() { None } else { Some(parts[0].to_string()) };
+         let working = if parts[1].is_empty() { None } else { Some(parts[1].to_string()) };
+         let mut environment_vars = HashMap::new();
+         if !parts[2].is_empty() {
+             for entry in parts[2].split(',') {
+                 if let Some((k, v)) = entry.split_once('=') {
+                     environment_vars.insert(k.to_string(), v.to_string());
+                 }
+             }
+         }
+         Ok(AppLaunchOptions {
+              custom_command: custom,
+              working_directory: working,
+              environment_vars,
+         })
+    }
 }
 
 fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
@@ -38,13 +78,10 @@ fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
     let name = name?;
     let mut exec = exec?;
     let icon = icon.unwrap_or_default();
-    // Remove common placeholders (including @@ from some Flatpak entries)
     for ph in ["%f", "%F", "%u", "%U", "%c", "%k", "@@"] {
         exec = exec.replace(ph, "");
     }
-    // Replace %i with the proper icon flag if present
     exec = exec.replace("%i", &format!("--icon {}", icon)).trim().to_string();
-    // Append wm_class if present and if not a Flatpak command (Flatpak doesn't accept --class)
     if let Some(class) = wm_class {
         if !exec.contains("flatpak run") {
             exec.push_str(&format!(" --class {}", class));
@@ -55,8 +92,6 @@ fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
 
 fn get_desktop_entries() -> Vec<(String, String, String)> {
     let mut entries = Vec::new();
-
-    // Scan standard XDG data directories
     if let Ok(xdg) = BaseDirectories::new() {
         for dir in xdg.get_data_dirs() {
             let apps_dir = dir.join("applications");
@@ -70,7 +105,6 @@ fn get_desktop_entries() -> Vec<(String, String, String)> {
                 }
             }
         }
-        // Also include Flatpak and Steam-specific directories so their apps are detected.
         let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("/"));
         let extra_dirs = vec![
             home.join(".local/share/flatpak/exports/share/applications"),
@@ -88,7 +122,6 @@ fn get_desktop_entries() -> Vec<(String, String, String)> {
             }
         }
     }
-
     entries
 }
 
@@ -114,8 +147,6 @@ fn launch_app(
     
     let (cmd, dir) = if let Some(opts) = options {
         let command = if let Some(custom_cmd) = &opts.custom_command {
-            // When the custom command is exactly "%command%", use the app's default exec command.
-            // Otherwise, if it contains "%command%" within a larger string, perform the replacement.
             if custom_cmd.trim() == "%command%" {
                 exec_cmd.to_string()
             } else if custom_cmd.contains("%command%") {
@@ -143,7 +174,6 @@ fn launch_app(
         }
     }
     
-    // For non-debug launching, use null streams.
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -267,11 +297,13 @@ impl AppInterface for AppLauncher {
     }
 
     fn get_icon_path(&self, app_name: &str) -> Option<String> {
-        self.results
-            .iter()
-            .find(|(name, _, _)| name == app_name)
-            .and_then(|(_, _, icon)| crate::cache::resolve_icon_path(icon, &self.config))
-    }
+    self.results
+        .iter()
+        .find(|(name, _, _)| name == app_name)
+        .and_then(|(name, _, icon)| crate::cache::resolve_icon_path(name, icon, &self.config))
+}
+
+
 
     fn get_formatted_launch_options(&self, app_name: &str) -> String {
         if let Some(opts) = self.launch_options.get(app_name) {
