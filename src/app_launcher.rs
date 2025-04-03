@@ -93,6 +93,7 @@ fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
 fn get_desktop_entries() -> Vec<(String, String, String)> {
     let mut entries = Vec::new();
     if let Ok(xdg) = BaseDirectories::new() {
+        // Scan system data directories.
         for dir in xdg.get_data_dirs() {
             let apps_dir = dir.join("applications");
             if let Ok(read_dir) = fs::read_dir(&apps_dir) {
@@ -105,10 +106,14 @@ fn get_desktop_entries() -> Vec<(String, String, String)> {
                 }
             }
         }
-        let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("/"));
+        // Add extra directories from the user's data home.
         let extra_dirs = vec![
-            home.join(".local/share/flatpak/exports/share/applications"),
-            home.join(".local/share/applications/steam"),
+            // Main user applications directory where many .desktop entries reside.
+            xdg.get_data_home().join("applications"),
+            // For flatpak applications.
+            xdg.get_data_home().join("flatpak/exports/share/applications"),
+            // Specific Steam directory (if it exists).
+            xdg.get_data_home().join("applications/steam"),
         ];
         for dir in extra_dirs {
             if let Ok(read_dir) = fs::read_dir(&dir) {
@@ -297,13 +302,11 @@ impl AppInterface for AppLauncher {
     }
 
     fn get_icon_path(&self, app_name: &str) -> Option<String> {
-    self.results
-        .iter()
-        .find(|(name, _, _)| name == app_name)
-        .and_then(|(name, _, icon)| crate::cache::resolve_icon_path(name, icon, &self.config))
-}
-
-
+        self.results
+            .iter()
+            .find(|(name, _, _)| name == app_name)
+            .and_then(|(name, _, icon)| crate::cache::resolve_icon_path(name, icon, &self.config))
+    }
 
     fn get_formatted_launch_options(&self, app_name: &str) -> String {
         if let Some(opts) = self.launch_options.get(app_name) {
