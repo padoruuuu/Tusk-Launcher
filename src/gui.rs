@@ -422,7 +422,7 @@ impl EframeGui {
                 current_volume: 0.0,
                 editing: None,
                 focused: false,
-                icon_manager: crate::cache::IconManager::new(),
+                icon_manager: crate::app_cache::IconManager::new(),
                 theme,
             }))
         }))?;
@@ -436,7 +436,7 @@ struct EframeWrapper {
     current_volume: f32,
     editing: Option<(String, String)>,
     focused: bool,
-    icon_manager: crate::cache::IconManager,
+    icon_manager: crate::app_cache::IconManager,
     theme: Theme,
 }
 

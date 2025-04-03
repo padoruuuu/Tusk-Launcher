@@ -1,7 +1,6 @@
 mod clock;
 mod power;
-mod cache;
-mod app_launcher;
+mod app_cache;
 mod gui;
 mod audio;
 
@@ -131,7 +130,7 @@ fn main() {
     let config = theme.get_config();
     println!("Current time: {}", get_current_time(&config));
 
-    let app = Box::new(app_launcher::AppLauncher::default());
+    let app = Box::new(app_cache::AppLauncher::default());
     if let Err(e) = EframeGui::run(app) {
         eprintln!("Error running application: {}", e);
         std::process::exit(1);
