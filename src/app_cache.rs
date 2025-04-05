@@ -1,8 +1,3 @@
-// merged.rs
-//
-// This merged file lovingly combines the functionalities from both cache.rs and app_launcher.rs.
-// It preserves full functionality, features, and compatibility with the rest of the project.
-
 use std::{
     collections::HashMap,
     fs,
@@ -20,11 +15,6 @@ use resvg::{tiny_skia::Pixmap, usvg};
 use xdg::BaseDirectories;
 use serde::{Serialize, Deserialize};
 
-//
-// --------------- AppLaunchOptions & Its Implementations ---------------
-//
-
-// Define AppLaunchOptions used throughout the project.
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct AppLaunchOptions {
     pub custom_command: Option<String>,
@@ -32,64 +22,52 @@ pub struct AppLaunchOptions {
     pub environment_vars: HashMap<String, String>,
 }
 
-// Implement Display for AppLaunchOptions so it can be converted to a string for caching.
 impl std::fmt::Display for AppLaunchOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-         let custom = self.custom_command.as_deref().unwrap_or("");
-         let working = self.working_directory.as_deref().unwrap_or("");
-         let env_str = self.environment_vars.iter()
-             .map(|(k, v)| format!("{}={}", k, v))
-             .collect::<Vec<_>>()
-             .join(",");
-         write!(f, "{}|{}|{}", custom, working, env_str)
+        let custom = self.custom_command.as_deref().unwrap_or("");
+        let working = self.working_directory.as_deref().unwrap_or("");
+        let env_str = self
+            .environment_vars
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<_>>()
+            .join(",");
+        write!(f, "{}|{}|{}", custom, working, env_str)
     }
 }
 
-// Implement FromStr for AppLaunchOptions to parse from the cached string.
 impl FromStr for AppLaunchOptions {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-         let parts: Vec<&str> = s.splitn(3, '|').collect();
-         if parts.len() != 3 {
-             return Err("Invalid format for AppLaunchOptions".to_string());
-         }
-         let custom = if parts[0].is_empty() { None } else { Some(parts[0].to_string()) };
-         let working = if parts[1].is_empty() { None } else { Some(parts[1].to_string()) };
-         let mut environment_vars = HashMap::new();
-         if !parts[2].is_empty() {
-             for entry in parts[2].split(',') {
-                 if let Some((k, v)) = entry.split_once('=') {
-                     environment_vars.insert(k.to_string(), v.to_string());
-                 }
-             }
-         }
-         Ok(AppLaunchOptions {
-              custom_command: custom,
-              working_directory: working,
-              environment_vars,
-         })
+        let parts: Vec<&str> = s.splitn(3, '|').collect();
+        if parts.len() != 3 {
+            return Err("Invalid format for AppLaunchOptions".into());
+        }
+        let custom = if parts[0].is_empty() { None } else { Some(parts[0].to_string()) };
+        let working = if parts[1].is_empty() { None } else { Some(parts[1].to_string()) };
+        let mut environment_vars = HashMap::new();
+        if !parts[2].is_empty() {
+            for entry in parts[2].split(',') {
+                if let Some((k, v)) = entry.split_once('=') {
+                    environment_vars.insert(k.to_string(), v.to_string());
+                }
+            }
+        }
+        Ok(AppLaunchOptions { custom_command: custom, working_directory: working, environment_vars })
     }
 }
 
-//
-// --------------- Cache Functionality ---------------
-//
-
-// Structures for application cache.
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct AppEntry {
     pub launch_options: Option<AppLaunchOptions>,
-    /// Holds the full resolved icon path (or empty if not set)
     pub icon_directory: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct AppCache {
-    /// Each entry is keyed by the application name.
     pub apps: Vec<(String, AppEntry)>,
 }
 
-// Structure for holding a cached icon texture.
 #[derive(Default)]
 pub struct IconCache {
     texture: Option<egui::TextureHandle>,
@@ -102,12 +80,9 @@ pub struct IconManager {
 
 impl IconManager {
     pub fn new() -> Self {
-        Self {
-            icon_textures: HashMap::new(),
-        }
+        Self { icon_textures: HashMap::new() }
     }
 
-    /// Loads a texture from the provided icon path. It reloads the texture if the file has been modified.
     pub fn get_texture(
         &mut self,
         ctx: &egui::Context,
@@ -120,6 +95,7 @@ impl IconManager {
                 }))
                 .unwrap_or(true)
         });
+
         if reload {
             let img = Self::load_image(icon_path).unwrap_or_else(|_| Self::create_placeholder());
             let tex = ctx.load_texture(icon_path, img, Default::default());
@@ -132,9 +108,7 @@ impl IconManager {
             );
             Some(tex)
         } else {
-            self.icon_textures
-                .get(icon_path)
-                .and_then(|cache| cache.texture.clone())
+            self.icon_textures.get(icon_path).and_then(|cache| cache.texture.clone())
         }
     }
 
@@ -143,8 +117,7 @@ impl IconManager {
             let data = fs::read(path)?;
             let tree = usvg::Tree::from_data(&data, &usvg::Options::default())?;
             let size = tree.size().to_int_size();
-            let mut pixmap =
-                Pixmap::new(size.width(), size.height()).ok_or("Failed to create pixmap")?;
+            let mut pixmap = Pixmap::new(size.width(), size.height()).ok_or("Failed to create pixmap")?;
             resvg::render(&tree, usvg::Transform::default(), &mut pixmap.as_mut());
             Ok(egui::ColorImage::from_rgba_unmultiplied(
                 [size.width() as usize, size.height() as usize],
@@ -164,23 +137,18 @@ impl IconManager {
     }
 }
 
-// A static cache file path determined by XDG BaseDirectories.
 static CACHE_FILE: Lazy<PathBuf> = Lazy::new(|| {
     let xdg = BaseDirectories::new()
         .map(|bd| bd.get_config_home().to_owned())
         .unwrap_or_else(|_| PathBuf::from("."));
     let mut path = xdg.join("tusk-launcher");
     fs::create_dir_all(&path).expect("Failed to create config directory");
-    // Using our custom .txt file format
     path.push("app_cache.txt");
     path
 });
 
-// Helpers for escaping/unescaping strings in our custom text format.
 fn escape(s: &str) -> String {
-    s.replace('\\', "\\\\")
-     .replace('\t', "\\t")
-     .replace('\n', "\\n")
+    s.replace('\\', "\\\\").replace('\t', "\\t").replace('\n', "\\n")
 }
 
 fn unescape(s: &str) -> String {
@@ -188,18 +156,15 @@ fn unescape(s: &str) -> String {
     let mut chars = s.chars();
     while let Some(c) = chars.next() {
         if c == '\\' {
-            if let Some(next) = chars.next() {
-                match next {
-                    '\\' => result.push('\\'),
-                    't' => result.push('\t'),
-                    'n' => result.push('\n'),
-                    other => {
-                        result.push('\\');
-                        result.push(other);
-                    }
+            match chars.next() {
+                Some('\\') => result.push('\\'),
+                Some('t') => result.push('\t'),
+                Some('n') => result.push('\n'),
+                Some(other) => {
+                    result.push('\\');
+                    result.push(other);
                 }
-            } else {
-                result.push('\\');
+                None => result.push('\\'),
             }
         } else {
             result.push(c);
@@ -208,19 +173,12 @@ fn unescape(s: &str) -> String {
     result
 }
 
-// Serializes the cache using our custom text format.
 fn serialize_cache(cache: &AppCache) -> String {
     let mut s = String::from("APP_CACHE_V1\n");
     for (app_name, entry) in &cache.apps {
         let name_escaped = escape(app_name);
-        let launch_options_escaped = entry.launch_options
-            .as_ref()
-            .map(|opts| escape(&opts.to_string()))
-            .unwrap_or_default();
-        let icon_escaped = entry.icon_directory
-            .as_ref()
-            .map(|s| escape(s))
-            .unwrap_or_default();
+        let launch_options_escaped = entry.launch_options.as_ref().map(|opts| escape(&opts.to_string())).unwrap_or_default();
+        let icon_escaped = entry.icon_directory.as_ref().map(|s| escape(s)).unwrap_or_default();
         s.push_str(&format!("{}\t{}\t{}\n", name_escaped, launch_options_escaped, icon_escaped));
     }
     s
@@ -228,84 +186,55 @@ fn serialize_cache(cache: &AppCache) -> String {
 
 fn deserialize_cache(s: &str) -> Result<AppCache, Box<dyn std::error::Error>> {
     let mut lines = s.lines();
-    let header = lines.next().ok_or("Empty cache file")?;
-    if header != "APP_CACHE_V1" {
+    if lines.next().ok_or("Empty cache file")? != "APP_CACHE_V1" {
         return Err("Unsupported cache file version".into());
     }
     let mut cache = AppCache::default();
-    for line in lines {
-        if line.trim().is_empty() {
-            continue;
-        }
+    for line in lines.filter(|l| !l.trim().is_empty()) {
         let parts: Vec<&str> = line.split('\t').collect();
         if parts.len() != 3 {
             continue;
         }
         let app_name = unescape(parts[0]);
-        let launch_options = if parts[1].is_empty() {
-            None
-        } else {
-            Some(parts[1].parse()?)
-        };
-        let icon_directory = if parts[2].is_empty() {
-            None
-        } else {
-            Some(unescape(parts[2]))
-        };
+        let launch_options = if parts[1].is_empty() { None } else { Some(parts[1].parse()?) };
+        let icon_directory = if parts[2].is_empty() { None } else { Some(unescape(parts[2])) };
         cache.apps.push((app_name, AppEntry { launch_options, icon_directory }));
     }
     Ok(cache)
 }
 
 fn save_cache(cache: &AppCache) -> Result<(), Box<dyn std::error::Error>> {
-    let data = serialize_cache(cache);
-    fs::write(&*CACHE_FILE, data)?;
+    fs::write(&*CACHE_FILE, serialize_cache(cache))?;
     Ok(())
 }
 
-// Global application cache.
 pub static APP_CACHE: Lazy<Mutex<AppCache>> = Lazy::new(|| {
     let cache = if CACHE_FILE.exists() {
-        match fs::read_to_string(&*CACHE_FILE)
+        fs::read_to_string(&*CACHE_FILE)
             .ok()
-            .and_then(|s| deserialize_cache(&s).ok()) {
-                Some(c) => c,
-                None => AppCache::default(),
-            }
+            .and_then(|s| deserialize_cache(&s).ok())
+            .unwrap_or_default()
     } else {
         AppCache::default()
     };
     Mutex::new(cache)
 });
 
-// Updates the recent apps list if enabled.
-pub fn update_recent_apps(
-    app_name: &str,
-    enable_recent_apps: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn update_recent_apps(app_name: &str, enable_recent_apps: bool) -> Result<(), Box<dyn std::error::Error>> {
     if !enable_recent_apps {
         return Ok(());
     }
     let mut cache = APP_CACHE.lock().map_err(|e| format!("Lock error: {:?}", e))?;
-    let existing_entry = cache.apps.iter()
-        .position(|(name, _)| name == app_name)
-        .map(|pos| cache.apps.remove(pos).1);
+    let existing_entry = cache.apps.iter().position(|(name, _)| name == app_name).map(|pos| cache.apps.remove(pos).1);
     let entry = existing_entry.unwrap_or_default();
-    // Insert at the beginning to mark as most recent.
     cache.apps.insert(0, (app_name.to_owned(), entry));
-    // Removed cache truncation so that all cached apps persist.
     save_cache(&cache)?;
     Ok(())
 }
 
-// Updates launch options for an app.
-pub fn update_launch_options(
-    app_name: &str,
-    options: AppLaunchOptions,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn update_launch_options(app_name: &str, options: AppLaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
     let mut cache = APP_CACHE.lock().map_err(|e| format!("Lock error: {:?}", e))?;
-    let pos = cache.apps.iter().position(|(name, _)| name == app_name);
-    if let Some(pos) = pos {
+    if let Some(pos) = cache.apps.iter().position(|(name, _)| name == app_name) {
         cache.apps[pos].1.launch_options = Some(options);
     } else {
         let mut entry = AppEntry::default();
@@ -316,28 +245,33 @@ pub fn update_launch_options(
     Ok(())
 }
 
-// Retrieves launch options for all apps.
 pub fn get_launch_options() -> HashMap<String, AppLaunchOptions> {
-    APP_CACHE
-        .lock()
-        .map(|c| {
-            c.apps.iter()
-                .filter_map(|(name, entry)| {
-                    entry.launch_options.clone().map(|options| (name.clone(), options))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    APP_CACHE.lock().map(|c| {
+        c.apps.iter()
+         .filter_map(|(name, entry)| entry.launch_options.clone().map(|opts| (name.clone(), opts)))
+         .collect()
+    }).unwrap_or_default()
 }
 
-/// Resolves an icon path for an application by searching XDG directories for the full icon file.
-/// If found, updates the same app entry with the full path so that subsequent lookups need not re-search.
+fn update_cache_with_icon(app_name: &str, icon_path: &str) -> Option<String> {
+    if let Ok(mut cache) = APP_CACHE.lock() {
+        if let Some(pos) = cache.apps.iter().position(|(key, _)| key == app_name) {
+            cache.apps[pos].1.icon_directory = Some(icon_path.to_string());
+        } else {
+            let mut entry = AppEntry::default();
+            entry.icon_directory = Some(icon_path.to_string());
+            cache.apps.push((app_name.to_owned(), entry));
+        }
+        let _ = save_cache(&cache);
+    }
+    Some(icon_path.to_string())
+}
+
 pub fn resolve_icon_path(app_name: &str, icon_name: &str, config: &crate::gui::Config) -> Option<String> {
     if icon_name.is_empty() || !config.enable_icons {
         return None;
     }
-    {
-        let cache = APP_CACHE.lock().ok()?;
+    if let Ok(cache) = APP_CACHE.lock() {
         if let Some((_, entry)) = cache.apps.iter().find(|(key, _)| key == app_name) {
             if let Some(ref cached_icon) = entry.icon_directory {
                 if Path::new(cached_icon).exists() {
@@ -346,52 +280,11 @@ pub fn resolve_icon_path(app_name: &str, icon_name: &str, config: &crate::gui::C
             }
         }
     }
-    let xdg = BaseDirectories::new().ok()?;
-    let mut search_paths = Vec::new();
-    search_paths.push(xdg.get_data_home().join("flatpak/exports/share/icons"));
-    for data_dir in xdg.get_data_dirs() {
-        search_paths.push(data_dir.join("icons"));
-    }
-    search_paths.push(PathBuf::from("/var/lib/flatpak/exports/share/icons"));
-    let mut pixmaps_paths: Vec<PathBuf> = xdg.get_data_dirs().into_iter().map(|dir| dir.join("pixmaps")).collect();
-    search_paths.append(&mut pixmaps_paths);
-    search_paths.push(PathBuf::from("/usr/share/pixmaps"));
-
-    // Add Steam-specific icon paths
-    if let Ok(home) = std::env::var("HOME") {
-        // Common Steam installation directory
-        let steam_base = PathBuf::from(home).join(".local/share/Steam");
-        
-        // Steam icon locations
-        search_paths.push(steam_base.join("steam/games"));
-        search_paths.push(steam_base.join("steam/cached/game_icons"));
-        search_paths.push(steam_base.join("appcache/librarycache"));
-    }
-
-    let icon_themes = ["hicolor", "Adwaita", "gnome", "breeze", "oxygen"];
-    let icon_sizes = [
-        "512x512", "256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "16x16", "scalable",
-    ];
-    let categories = ["apps", "devices", "places", "mimetypes", "status", "actions"];
-    let extensions = ["png", "svg", "xpm", "jpg", "jpeg", "ico"]; // Added common Steam icon extensions
-
-    // Check for direct icon path first (often used by Steam)
     if Path::new(icon_name).exists() {
-        if let Ok(mut cache) = APP_CACHE.lock() {
-            if let Some(pos) = cache.apps.iter().position(|(key, _)| key == app_name) {
-                cache.apps[pos].1.icon_directory = Some(icon_name.to_string());
-            } else {
-                let mut entry = AppEntry::default();
-                entry.icon_directory = Some(icon_name.to_string());
-                cache.apps.push((app_name.to_owned(), entry));
-            }
-            let _ = save_cache(&cache);
-        }
-        return Some(icon_name.to_string());
+        return update_cache_with_icon(app_name, icon_name);
     }
-
-    // Check for Steam-specific icon patterns
-    let steam_icon_patterns = [
+    let search_paths = get_icon_search_paths();
+    let steam_patterns = [
         format!("{}_header.jpg", icon_name),
         format!("{}_library_600x900.jpg", icon_name),
         format!("{}_library.png", icon_name),
@@ -400,71 +293,60 @@ pub fn resolve_icon_path(app_name: &str, icon_name: &str, config: &crate::gui::C
         format!("{}.jpg", icon_name),
         format!("{}.ico", icon_name),
     ];
-
-    // Try to find Steam icons first
     for path in &search_paths {
-        for pattern in &steam_icon_patterns {
+        for pattern in &steam_patterns {
             let full_path = path.join(pattern);
             if full_path.exists() {
-                if let Ok(mut cache) = APP_CACHE.lock() {
-                    if let Some(pos) = cache.apps.iter().position(|(key, _)| key == app_name) {
-                        cache.apps[pos].1.icon_directory = full_path.to_str().map(String::from);
-                    } else {
-                        let mut entry = AppEntry::default();
-                        entry.icon_directory = full_path.to_str().map(String::from);
-                        cache.apps.push((app_name.to_owned(), entry));
-                    }
-                    let _ = save_cache(&cache);
-                }
-                return full_path.to_str().map(String::from);
+                return full_path.to_str().and_then(|p| update_cache_with_icon(app_name, p));
             }
         }
     }
-
-    let check_icon = |base: &Path, theme: &str, size: &str, category: &str, icon: &str| -> Option<PathBuf> {
-        let dir = base.join(theme).join(size).join(category);
-        for ext in &extensions {
-            let p = dir.join(format!("{}.{}", icon, ext));
-            if p.exists() {
-                return Some(p);
-            }
-        }
-        None
-    };
-
-    // Try standard icon search for non-Steam icons
-    let found = search_paths.iter().find_map(|base| {
+    let icon_themes = ["hicolor", "Adwaita", "gnome", "breeze", "oxygen"];
+    let icon_sizes = ["512x512", "256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "16x16", "scalable"];
+    let categories = ["apps", "devices", "places", "mimetypes", "status", "actions"];
+    let extensions = ["png", "svg", "xpm", "jpg", "jpeg", "ico"];
+    if let Some(path) = search_paths.iter().find_map(|base| {
         icon_themes.iter().find_map(|theme| {
             icon_sizes.iter().find_map(|size| {
-                categories.iter().find_map(|cat| check_icon(base, theme, size, cat, icon_name))
+                categories.iter().find_map(|cat| {
+                    let dir = base.join(theme).join(size).join(cat);
+                    for ext in &extensions {
+                        let p = dir.join(format!("{}.{}", icon_name, ext));
+                        if p.exists() {
+                            return p.to_str().map(String::from);
+                        }
+                    }
+                    None
+                })
             })
         })
-    });
-
-    if let Some(found_path) = found {
-        if let Ok(mut cache) = APP_CACHE.lock() {
-            if let Some(pos) = cache.apps.iter().position(|(key, _)| key == app_name) {
-                cache.apps[pos].1.icon_directory = found_path.to_str().map(String::from);
-            } else {
-                let mut entry = AppEntry::default();
-                entry.icon_directory = found_path.to_str().map(String::from);
-                cache.apps.push((app_name.to_owned(), entry));
-            }
-            let _ = save_cache(&cache);
-        }
-        return found_path.to_str().map(String::from);
+    }) {
+        return update_cache_with_icon(app_name, &path);
     }
     None
 }
 
-//
-// --------------- App Launcher Functionality ---------------
-//
+fn get_icon_search_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Ok(xdg) = BaseDirectories::new() {
+        paths.push(xdg.get_data_home().join("flatpak/exports/share/icons"));
+        for data_dir in xdg.get_data_dirs() {
+            paths.push(data_dir.join("icons"));
+            paths.push(data_dir.join("pixmaps"));
+        }
+    }
+    paths.push(PathBuf::from("/var/lib/flatpak/exports/share/icons"));
+    paths.push(PathBuf::from("/usr/share/pixmaps"));
+    if let Ok(home) = std::env::var("HOME") {
+        let steam_base = PathBuf::from(home).join(".local/share/Steam");
+        paths.push(steam_base.join("steam/games"));
+        paths.push(steam_base.join("steam/cached/game_icons"));
+        paths.push(steam_base.join("appcache/librarycache"));
+    }
+    paths
+}
 
-// Note: This section assumes that modules like `gui`, `clock`, and `power` are defined elsewhere in your project.
-use crate::gui::{AppInterface, Config};
-use crate::clock::get_current_time;
-use crate::power;
+use crate::gui::Config;
 
 fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
     let content = fs::read_to_string(path).ok()?;
@@ -498,26 +380,14 @@ fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
 fn get_desktop_entries() -> Vec<(String, String, String)> {
     let mut entries = Vec::new();
     if let Ok(xdg) = BaseDirectories::new() {
-        // Scan system data directories.
+        let mut app_dirs = Vec::new();
         for dir in xdg.get_data_dirs() {
-            let apps_dir = dir.join("applications");
-            if let Ok(read_dir) = fs::read_dir(&apps_dir) {
-                for entry in read_dir.filter_map(Result::ok) {
-                    if entry.path().extension().map_or(false, |ext| ext == "desktop") {
-                        if let Some(e) = parse_desktop_entry(&entry.path()) {
-                            entries.push(e);
-                        }
-                    }
-                }
-            }
+            app_dirs.push(dir.join("applications"));
         }
-        // Add extra directories from the user's data home.
-        let extra_dirs = vec![
-            xdg.get_data_home().join("applications"),
-            xdg.get_data_home().join("flatpak/exports/share/applications"),
-            xdg.get_data_home().join("applications/steam"),
-        ];
-        for dir in extra_dirs {
+        app_dirs.push(xdg.get_data_home().join("applications"));
+        app_dirs.push(xdg.get_data_home().join("flatpak/exports/share/applications"));
+        app_dirs.push(xdg.get_data_home().join("applications/steam"));
+        for dir in app_dirs {
             if let Ok(read_dir) = fs::read_dir(&dir) {
                 for entry in read_dir.filter_map(Result::ok) {
                     if entry.path().extension().map_or(false, |ext| ext == "desktop") {
@@ -551,7 +421,6 @@ fn launch_app(
         update_recent_apps(app_name, true)?;
     }
     let home_dir = std::env::var("HOME").map(PathBuf::from).map_err(|_| "No home directory")?;
-    
     let (cmd, dir) = if let Some(opts) = options {
         let command = if let Some(custom_cmd) = &opts.custom_command {
             if custom_cmd.trim() == "%command%" {
@@ -564,38 +433,26 @@ fn launch_app(
         } else {
             exec_cmd.to_string()
         };
-        (
-            command,
-            opts.working_directory.as_deref().unwrap_or_else(|| home_dir.to_str().unwrap_or("")),
-        )
+        (command, opts.working_directory.as_deref().unwrap_or_else(|| home_dir.to_str().unwrap_or("")))
     } else {
         (exec_cmd.to_string(), home_dir.to_str().unwrap_or(""))
     };
-    
     let mut command = Command::new("sh");
     command.arg("-c").arg(&cmd).current_dir(dir);
-    
     if let Some(opts) = options {
         for (key, value) in &opts.environment_vars {
             command.env(key, value);
         }
     }
-    
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    
+    command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     command.spawn()?;
     Ok(())
 }
 
-// Parses a user-input string into launch options.
 fn parse_launch_options_input(input: &str, _original_command: Option<String>) -> AppLaunchOptions {
     let mut parts = input.split_whitespace().peekable();
     let mut options = AppLaunchOptions::default();
     let mut command_parts = Vec::new();
-    
     while let Some(part) = parts.next() {
         match part {
             "-e" => {
@@ -617,23 +474,11 @@ fn parse_launch_options_input(input: &str, _original_command: Option<String>) ->
             }
         }
     }
-    
-    let input_command = if !command_parts.is_empty() {
-        command_parts.join(" ")
-    } else {
-        String::new()
-    };
-    
-    if !input_command.is_empty() {
-        options.custom_command = Some(input_command);
+    if !command_parts.is_empty() {
+        options.custom_command = Some(command_parts.join(" "));
     }
-    
     options
 }
-
-//
-// --------------- AppLauncher Struct & Implementation ---------------
-//
 
 pub struct AppLauncher {
     query: String,
@@ -650,12 +495,13 @@ impl Default for AppLauncher {
         let applications = get_desktop_entries();
         let launch_options = get_launch_options();
         let results = if config.enable_recent_apps {
-            use std::sync::Mutex;
             APP_CACHE
                 .lock()
                 .ok()
                 .map(|cache| {
-                    cache.apps.iter()
+                    cache
+                        .apps
+                        .iter()
                         .map(|(name, _)| name.clone())
                         .filter_map(|app_name| applications.iter().find(|(name, _, _)| name == &app_name).cloned())
                         .take(config.max_search_results)
@@ -676,7 +522,7 @@ impl Default for AppLauncher {
     }
 }
 
-impl AppInterface for AppLauncher {
+impl crate::gui::AppInterface for AppLauncher {
     fn update(&mut self) {
         if self.quit {
             std::process::exit(0);
@@ -698,23 +544,13 @@ impl AppInterface for AppLauncher {
             }
             "ESC" => self.quit = true,
             "ENTER" => self.launch_first_result(),
-            "P" if self.config.enable_power_options => power::power_off(&self.config),
-            "R" if self.config.enable_power_options => power::restart(&self.config),
-            "L" if self.config.enable_power_options => power::logout(&self.config),
+            "P" if self.config.enable_power_options => crate::power::power_off(&self.config),
+            "R" if self.config.enable_power_options => crate::power::restart(&self.config),
+            "L" if self.config.enable_power_options => crate::power::logout(&self.config),
             _ => {
                 self.query = input.to_string();
                 self.results = if self.config.enable_recent_apps && self.query.trim().is_empty() {
-                    APP_CACHE
-                        .lock()
-                        .ok()
-                        .map(|cache| {
-                            cache.apps.iter()
-                                .map(|(name, _)| name.clone())
-                                .filter_map(|app_name| self.applications.iter().find(|(name, _, _)| name == &app_name).cloned())
-                                .take(self.config.max_search_results)
-                                .collect()
-                        })
-                        .unwrap_or_default()
+                    self.get_recent_apps()
                 } else {
                     search_applications(&self.query, &self.applications, self.config.max_search_results)
                 };
@@ -735,7 +571,7 @@ impl AppInterface for AppLauncher {
     }
 
     fn get_time(&self) -> String {
-        get_current_time(&self.config)
+        crate::clock::get_current_time(&self.config)
     }
 
     fn launch_app(&mut self, app_name: &str) {
@@ -760,11 +596,11 @@ impl AppInterface for AppLauncher {
             for (key, value) in &opts.environment_vars {
                 result.push_str(&format!("-e {}={} ", key, value));
             }
+            if let Some(dir) = &opts.working_directory {
+                result.push_str(&format!("-w {} ", dir));
+            }
             if let Some(cmd) = &opts.custom_command {
                 result.push_str(cmd);
-            }
-            if let Some(dir) = &opts.working_directory {
-                result.push_str(&format!(" -w {}", dir));
             }
             result.trim().to_string()
         } else {
@@ -788,5 +624,21 @@ impl AppLauncher {
             .iter()
             .find(|(name, _, _)| name == app_name)
             .map(|(_, cmd, _)| cmd.clone())
+    }
+
+    fn get_recent_apps(&self) -> Vec<(String, String, String)> {
+        APP_CACHE
+            .lock()
+            .ok()
+            .map(|cache| {
+                cache
+                    .apps
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .filter_map(|app_name| self.applications.iter().find(|(name, _, _)| name == &app_name).cloned())
+                    .take(self.config.max_search_results)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }
