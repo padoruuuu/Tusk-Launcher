@@ -267,37 +267,37 @@ fn update_cache_with_icon(app_name: &str, icon_path: &str) -> Option<String> {
     Some(icon_path.to_string())
 }
 
-/// Overhauled resolve_icon_path:
-/// For Steam games, if the icon_name is a directory without common image files,
-/// or if it is a special marker "steam_icon:<appid>", then we try to locate the icon
-/// in Steam's librarycache folder where icons are stored with random filenames.
 pub fn resolve_icon_path(app_name: &str, icon_name: &str, config: &crate::gui::Config) -> Option<String> {
     if icon_name.is_empty() || !config.enable_icons {
         return None;
     }
-    // If icon_name is a marker for a Steam icon, e.g. "steam_icon:<appid>"
+
     if icon_name.starts_with("steam_icon:") {
         let appid = icon_name.trim_start_matches("steam_icon:");
-        if let Ok(home) = std::env::var("HOME") {
-            // Look in Steam's librarycache folder for this appid.
-            let librarycache = PathBuf::from(home)
-                .join(".local/share/Steam/appcache/librarycache")
-                .join(appid);
-            if librarycache.exists() && librarycache.is_dir() {
-                if let Ok(entries) = fs::read_dir(librarycache) {
-                    for entry in entries.filter_map(Result::ok) {
-                        let path = entry.path();
-                        if let Some(ext) = path.extension().and_then(|e| e.to_str()).map(|s| s.to_owned()) {
-                            if ["png", "jpg", "jpeg", "svg", "ico"].contains(&ext.to_lowercase().as_str()) {
-                                return update_cache_with_icon(app_name, path.to_str().unwrap());
-                            }
-                        }
-                    }
+        let search_paths = get_icon_search_paths();
+        
+        let steam_patterns = [
+            format!("{}_header.jpg", appid),
+            format!("{}_library_600x900.jpg", appid),
+            format!("{}_library.png", appid),
+            format!("{}_icon.png", appid),
+            format!("{}.png", appid),
+            format!("{}.jpg", appid),
+            format!("{}.ico", appid),
+        ];
+        
+        for path in &search_paths {
+            for pattern in &steam_patterns {
+                let full_path = path.join(pattern);
+                if full_path.exists() {
+                    return update_cache_with_icon(app_name, full_path.to_str().unwrap());
                 }
             }
         }
+        
+        return resolve_icon_path(app_name, appid, config);
     }
-    // If icon_name is a directory, search inside for a common image file.
+
     if Path::new(icon_name).is_dir() {
         if let Ok(entries) = fs::read_dir(icon_name) {
             for entry in entries.filter_map(Result::ok) {
@@ -310,6 +310,7 @@ pub fn resolve_icon_path(app_name: &str, icon_name: &str, config: &crate::gui::C
             }
         }
     }
+
     if let Ok(cache) = APP_CACHE.lock() {
         if let Some((_, entry)) = cache.apps.iter().find(|(key, _)| key == app_name) {
             if let Some(ref cached_icon) = entry.icon_directory {
@@ -319,9 +320,11 @@ pub fn resolve_icon_path(app_name: &str, icon_name: &str, config: &crate::gui::C
             }
         }
     }
+
     if Path::new(icon_name).exists() {
         return update_cache_with_icon(app_name, icon_name);
     }
+
     let search_paths = get_icon_search_paths();
     let steam_patterns = [
         format!("{}_header.jpg", icon_name),
@@ -332,6 +335,7 @@ pub fn resolve_icon_path(app_name: &str, icon_name: &str, config: &crate::gui::C
         format!("{}.jpg", icon_name),
         format!("{}.ico", icon_name),
     ];
+    
     for path in &search_paths {
         for pattern in &steam_patterns {
             let full_path = path.join(pattern);
@@ -340,10 +344,12 @@ pub fn resolve_icon_path(app_name: &str, icon_name: &str, config: &crate::gui::C
             }
         }
     }
+
     let icon_themes = ["hicolor", "Adwaita", "gnome", "breeze", "oxygen"];
     let icon_sizes = ["512x512", "256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "16x16", "scalable"];
     let categories = ["apps", "devices", "places", "mimetypes", "status", "actions"];
     let extensions = ["png", "svg", "xpm", "jpg", "jpeg", "ico"];
+    
     if let Some(path) = search_paths.iter().find_map(|base| {
         icon_themes.iter().find_map(|theme| {
             icon_sizes.iter().find_map(|size| {
@@ -362,30 +368,38 @@ pub fn resolve_icon_path(app_name: &str, icon_name: &str, config: &crate::gui::C
     }) {
         return update_cache_with_icon(app_name, &path);
     }
+
     None
 }
 
 fn get_icon_search_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if let Ok(xdg) = BaseDirectories::new() {
+        paths.push(xdg.get_data_home().join("icons"));
         paths.push(xdg.get_data_home().join("flatpak/exports/share/icons"));
         for data_dir in xdg.get_data_dirs() {
             paths.push(data_dir.join("icons"));
             paths.push(data_dir.join("pixmaps"));
         }
     }
-    paths.push(PathBuf::from("/var/lib/flatpak/exports/share/icons"));
     paths.push(PathBuf::from("/usr/share/pixmaps"));
+    paths.push(PathBuf::from("/var/lib/flatpak/exports/share/icons"));
+    
     if let Ok(home) = std::env::var("HOME") {
-        let steam_base = PathBuf::from(home).join(".local/share/Steam");
-        paths.push(steam_base.join("steam/games"));
-        paths.push(steam_base.join("steam/cached/game_icons"));
-        paths.push(steam_base.join("appcache/librarycache"));
+        let steam_paths = [
+            ".local/share/icons/hicolor"
+        ];
+        
+        for steam_path in steam_paths {
+            let full_path = PathBuf::from(&home).join(steam_path);
+            if full_path.exists() {
+                paths.push(full_path);
+            }
+        }
     }
+    
     paths
 }
-
-use crate::gui::Config;
 
 fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
     let content = fs::read_to_string(path).ok()?;
@@ -404,7 +418,6 @@ fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
     let name = name?;
     let mut exec = exec?;
     let icon = icon.unwrap_or_default();
-    // Remove common placeholders.
     for ph in ["%f", "%F", "%u", "%U", "%c", "%k", "@@"] {
         exec = exec.replace(ph, "");
     }
@@ -425,7 +438,6 @@ fn get_desktop_entries() -> Vec<(String, String, String)> {
             app_dirs.push(dir.join("applications"));
         }
         app_dirs.push(xdg.get_data_home().join("applications"));
-        // Exclude the Steam-specific desktop directory.
         app_dirs.push(xdg.get_data_home().join("flatpak/exports/share/applications"));
         for dir in app_dirs {
             if let Ok(read_dir) = fs::read_dir(&dir) {
@@ -442,11 +454,6 @@ fn get_desktop_entries() -> Vec<(String, String, String)> {
     entries
 }
 
-/// Parse installed Steam games by reading Steam’s libraryfolders and appmanifest files.
-/// Duplicate games (by appid) are skipped.
-/// For each game, if the installation directory does not contain any common icon files,
-/// we store a marker "steam_icon:<appid>" so that resolve_icon_path can later attempt
-/// to find an icon in the Steam librarycache folder.
 fn get_steam_entries() -> Vec<(String, String, String)> {
     let mut entries = Vec::new();
     let mut seen_appids = HashSet::new();
@@ -455,12 +462,10 @@ fn get_steam_entries() -> Vec<(String, String, String)> {
     if !steam_path.exists() {
         return entries;
     }
-    // Start with the default Steam library.
     let mut library_paths = vec![steam_path.clone()];
     let library_vdf = steam_path.join("steamapps/libraryfolders.vdf");
     if library_vdf.exists() {
         if let Ok(content) = fs::read_to_string(&library_vdf) {
-            // Look for any line containing a "path" key.
             for line in content.lines() {
                 if line.contains("\"path\"") {
                     let parts: Vec<&str> = line.split('"').filter(|s| !s.trim().is_empty()).collect();
@@ -474,7 +479,6 @@ fn get_steam_entries() -> Vec<(String, String, String)> {
             }
         }
     }
-    // For each library, scan for appmanifest files.
     for lib in library_paths {
         let steamapps = lib.join("steamapps");
         if steamapps.exists() && steamapps.is_dir() {
@@ -517,7 +521,6 @@ fn get_steam_entries() -> Vec<(String, String, String)> {
                                 let mut icon_path = String::new();
                                 if icon_dir.exists() {
                                     icon_path = icon_dir.to_string_lossy().to_string();
-                                    // Check if the directory contains any common image files.
                                     if let Ok(mut entries) = fs::read_dir(&icon_dir) {
                                         let has_icon = entries.any(|e| {
                                             e.ok().and_then(|entry| {
@@ -531,7 +534,6 @@ fn get_steam_entries() -> Vec<(String, String, String)> {
                                         }
                                     }
                                 }
-                                // If no icon found in the installation folder, set a marker.
                                 if icon_path.is_empty() {
                                     icon_path = format!("steam_icon:{}", appid_val);
                                 }
@@ -629,17 +631,15 @@ pub struct AppLauncher {
     applications: Vec<(String, String, String)>,
     results: Vec<(String, String, String)>,
     quit: bool,
-    config: Config,
+    config: crate::gui::Config,
     launch_options: HashMap<String, AppLaunchOptions>,
 }
 
 impl Default for AppLauncher {
     fn default() -> Self {
-        let config = Config::default();
-        // Merge desktop entries with Steam game entries.
+        let config = crate::gui::Config::default();
         let mut apps = get_desktop_entries();
         apps.extend(get_steam_entries());
-        // Deduplicate entries based on the game name.
         let mut unique_apps: HashMap<String, (String, String)> = HashMap::new();
         for (name, cmd, icon) in apps {
             unique_apps.entry(name).or_insert((cmd, icon));
