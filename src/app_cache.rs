@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -267,9 +267,48 @@ fn update_cache_with_icon(app_name: &str, icon_path: &str) -> Option<String> {
     Some(icon_path.to_string())
 }
 
+/// Overhauled resolve_icon_path:
+/// For Steam games, if the icon_name is a directory without common image files,
+/// or if it is a special marker "steam_icon:<appid>", then we try to locate the icon
+/// in Steam's librarycache folder where icons are stored with random filenames.
 pub fn resolve_icon_path(app_name: &str, icon_name: &str, config: &crate::gui::Config) -> Option<String> {
     if icon_name.is_empty() || !config.enable_icons {
         return None;
+    }
+    // If icon_name is a marker for a Steam icon, e.g. "steam_icon:<appid>"
+    if icon_name.starts_with("steam_icon:") {
+        let appid = icon_name.trim_start_matches("steam_icon:");
+        if let Ok(home) = std::env::var("HOME") {
+            // Look in Steam's librarycache folder for this appid.
+            let librarycache = PathBuf::from(home)
+                .join(".local/share/Steam/appcache/librarycache")
+                .join(appid);
+            if librarycache.exists() && librarycache.is_dir() {
+                if let Ok(entries) = fs::read_dir(librarycache) {
+                    for entry in entries.filter_map(Result::ok) {
+                        let path = entry.path();
+                        if let Some(ext) = path.extension().and_then(|e| e.to_str()).map(|s| s.to_owned()) {
+                            if ["png", "jpg", "jpeg", "svg", "ico"].contains(&ext.to_lowercase().as_str()) {
+                                return update_cache_with_icon(app_name, path.to_str().unwrap());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // If icon_name is a directory, search inside for a common image file.
+    if Path::new(icon_name).is_dir() {
+        if let Ok(entries) = fs::read_dir(icon_name) {
+            for entry in entries.filter_map(Result::ok) {
+                let path = entry.path();
+                if let Some(ext) = path.extension().and_then(|ext| ext.to_str()).map(|s| s.to_owned()) {
+                    if ["png", "jpg", "jpeg", "svg", "ico"].contains(&ext.to_lowercase().as_str()) {
+                        return update_cache_with_icon(app_name, path.to_str().unwrap());
+                    }
+                }
+            }
+        }
     }
     if let Ok(cache) = APP_CACHE.lock() {
         if let Some((_, entry)) = cache.apps.iter().find(|(key, _)| key == app_name) {
@@ -365,6 +404,7 @@ fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
     let name = name?;
     let mut exec = exec?;
     let icon = icon.unwrap_or_default();
+    // Remove common placeholders.
     for ph in ["%f", "%F", "%u", "%U", "%c", "%k", "@@"] {
         exec = exec.replace(ph, "");
     }
@@ -385,14 +425,118 @@ fn get_desktop_entries() -> Vec<(String, String, String)> {
             app_dirs.push(dir.join("applications"));
         }
         app_dirs.push(xdg.get_data_home().join("applications"));
+        // Exclude the Steam-specific desktop directory.
         app_dirs.push(xdg.get_data_home().join("flatpak/exports/share/applications"));
-        app_dirs.push(xdg.get_data_home().join("applications/steam"));
         for dir in app_dirs {
             if let Ok(read_dir) = fs::read_dir(&dir) {
                 for entry in read_dir.filter_map(Result::ok) {
                     if entry.path().extension().map_or(false, |ext| ext == "desktop") {
                         if let Some(e) = parse_desktop_entry(&entry.path()) {
                             entries.push(e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    entries
+}
+
+/// Parse installed Steam games by reading Steam’s libraryfolders and appmanifest files.
+/// Duplicate games (by appid) are skipped.
+/// For each game, if the installation directory does not contain any common icon files,
+/// we store a marker "steam_icon:<appid>" so that resolve_icon_path can later attempt
+/// to find an icon in the Steam librarycache folder.
+fn get_steam_entries() -> Vec<(String, String, String)> {
+    let mut entries = Vec::new();
+    let mut seen_appids = HashSet::new();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let steam_path = PathBuf::from(&home).join(".local/share/Steam");
+    if !steam_path.exists() {
+        return entries;
+    }
+    // Start with the default Steam library.
+    let mut library_paths = vec![steam_path.clone()];
+    let library_vdf = steam_path.join("steamapps/libraryfolders.vdf");
+    if library_vdf.exists() {
+        if let Ok(content) = fs::read_to_string(&library_vdf) {
+            // Look for any line containing a "path" key.
+            for line in content.lines() {
+                if line.contains("\"path\"") {
+                    let parts: Vec<&str> = line.split('"').filter(|s| !s.trim().is_empty()).collect();
+                    if parts.len() >= 2 {
+                        let lib_path = PathBuf::from(parts[1]);
+                        if lib_path.exists() && !library_paths.contains(&lib_path) {
+                            library_paths.push(lib_path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // For each library, scan for appmanifest files.
+    for lib in library_paths {
+        let steamapps = lib.join("steamapps");
+        if steamapps.exists() && steamapps.is_dir() {
+            if let Ok(entries_iter) = fs::read_dir(&steamapps) {
+                for entry in entries_iter.filter_map(Result::ok) {
+                    let path = entry.path();
+                    if path.is_file() && path.file_name().unwrap_or_default().to_string_lossy().starts_with("appmanifest_") {
+                        if let Ok(content) = fs::read_to_string(&path) {
+                            let mut appid = None;
+                            let mut name = None;
+                            let mut installdir = None;
+                            for line in content.lines() {
+                                let trimmed = line.trim();
+                                if trimmed.starts_with("\"appid\"") {
+                                    let parts: Vec<&str> = trimmed.split('"').collect();
+                                    if parts.len() >= 4 {
+                                        appid = Some(parts[3].to_string());
+                                    }
+                                }
+                                if trimmed.starts_with("\"name\"") {
+                                    let parts: Vec<&str> = trimmed.split('"').collect();
+                                    if parts.len() >= 4 {
+                                        name = Some(parts[3].to_string());
+                                    }
+                                }
+                                if trimmed.starts_with("\"installdir\"") {
+                                    let parts: Vec<&str> = trimmed.split('"').collect();
+                                    if parts.len() >= 4 {
+                                        installdir = Some(parts[3].to_string());
+                                    }
+                                }
+                            }
+                            if let (Some(appid_val), Some(name_val), Some(installdir_val)) = (appid, name, installdir) {
+                                if seen_appids.contains(&appid_val) {
+                                    continue;
+                                }
+                                seen_appids.insert(appid_val.clone());
+                                let exec_cmd = format!("steam steam://rungameid/{}", appid_val);
+                                let icon_dir = steamapps.join("common").join(&installdir_val);
+                                let mut icon_path = String::new();
+                                if icon_dir.exists() {
+                                    icon_path = icon_dir.to_string_lossy().to_string();
+                                    // Check if the directory contains any common image files.
+                                    if let Ok(mut entries) = fs::read_dir(&icon_dir) {
+                                        let has_icon = entries.any(|e| {
+                                            e.ok().and_then(|entry| {
+                                                entry.path().extension().and_then(|ext| ext.to_str().map(|s| s.to_owned()))
+                                            }).map_or(false, |ext| {
+                                                ["png", "jpg", "jpeg", "svg", "ico"].contains(&ext.to_lowercase().as_str())
+                                            })
+                                        });
+                                        if !has_icon {
+                                            icon_path.clear();
+                                        }
+                                    }
+                                }
+                                // If no icon found in the installation folder, set a marker.
+                                if icon_path.is_empty() {
+                                    icon_path = format!("steam_icon:{}", appid_val);
+                                }
+                                entries.push((name_val, exec_cmd, icon_path));
+                            }
                         }
                     }
                 }
@@ -492,7 +636,15 @@ pub struct AppLauncher {
 impl Default for AppLauncher {
     fn default() -> Self {
         let config = Config::default();
-        let applications = get_desktop_entries();
+        // Merge desktop entries with Steam game entries.
+        let mut apps = get_desktop_entries();
+        apps.extend(get_steam_entries());
+        // Deduplicate entries based on the game name.
+        let mut unique_apps: HashMap<String, (String, String)> = HashMap::new();
+        for (name, cmd, icon) in apps {
+            unique_apps.entry(name).or_insert((cmd, icon));
+        }
+        let applications = unique_apps.into_iter().map(|(name, (cmd, icon))| (name, cmd, icon)).collect::<Vec<_>>();
         let launch_options = get_launch_options();
         let results = if config.enable_recent_apps {
             APP_CACHE
