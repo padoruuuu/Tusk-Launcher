@@ -11,18 +11,18 @@ use eframe;
 use serde::{Deserialize, Serialize};
 use xdg;
 
-const DEFAULT_THEME: &str = r#".main-window {background-color: rgba(0,0,0,0.9);width:200px;height:200px;}
-.search-bar {x:20px;y:10px;width:150px;height:25px;background-color:rgba(59,66,82,1);hover-background-color:rgba(76,86,106,1);border-radius:0px;text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);padding:0px;font-size:12px;}
-.app-list {x:2px;y:35px;width:109px;height:108px;background-color:rgba(46,52,64,1);padding:0px;border-radius:0px;}
-.app-button {background-color:rgba(122,162,247,1);hover-background-color:rgba(102,138,196,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);border-radius:0px;padding:0px;font-size:12px;order:2;}
-.app-icon {width:18px;height:18px;order:1;}
-.settings-button {width:22px;height:22px;hover-text-color:rgba(102,138,196,0.5);text-color:rgba(122,162,247,1);font-size:16px;x-offset:10px;y-offset:-3px;order:0;}
-.time-display {x:30px;y:160px;width:200px;height:50px;background-color:rgba(46,52,64,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);text-align:center;}
-.volume-slider {x:40px;y:155px;width:200px;height:50px;background-color:rgba(46,52,64,1);hover-background-color:rgba(67,76,94,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);border-radius:4px;}
-.power-button {x:20px;y:190px;width:65px;height:15px;background-color:rgba(122,162,247,1);hover-background-color:rgba(102,138,196,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);border-radius:0px;padding:0px;}
-.edit-button {background-color:rgba(122,162,247,1);hover-background-color:rgba(102,138,196,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);border-radius:0px;padding:0px;font-size:12px;}
-.env-input {background-color:rgba(59,66,82,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);padding:0px;font-size:12px;border-radius:0px;width:150px;height:50px;}
-.config {enable_recent_apps:true;max_search_results:5;enable_power_options:true;show_time:true;time_format:"%I:%M %p";time_order:MdyHms;enable_audio_control:false;max_volume:1.5;volume_update_interval_ms:500;power_commands:systemctl poweroff,loginctl poweroff,poweroff,halt;restart_commands:systemctl reboot,loginctl reboot,reboot;logout_commands:loginctl terminate-session $XDG_SESSION_ID,hyprctl dispatch exit,swaymsg exit,gnome-session-quit --logout --no-prompt,qdbus org.kde.ksmserver /KSMServer logout 0 0 0;enable_icons:true;}
+const DEFAULT_THEME: &str = r#".main-window{background-color:rgba(1,1,1,.75);background-image:/home/zeakz/mpv-shot0014.jpg;background-size:fill;width:200px;height:200px}
+.search-bar{x:20px;y:10px;width:150px;height:25px;background-color:rgba(59,66,82,1);hover-background-color:rgba(76,86,106,1);border-radius:0;text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);padding:0;font-size:12px}
+.app-list{x:2px;y:35px;width:109px;height:108px;background-color:rgba(46,52,64,1);padding:0;border-radius:0}
+.app-button{background-color:rgba(122,162,247,1);hover-background-color:rgba(102,138,196,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);border-radius:0;padding:0;font-size:12px;order:2}
+.app-icon{width:18px;height:18px;order:1}
+.settings-button{width:22px;height:22px;hover-text-color:rgba(102,138,196,0.5);text-color:rgba(122,162,247,1);font-size:16px;x-offset:10px;y-offset:-3px;order:0}
+.time-display{x:30px;y:160px;width:200px;height:50px;background-color:rgba(46,52,64,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);text-align:center}
+.volume-slider{x:40px;y:155px;width:200px;height:50px;background-color:rgba(46,52,64,1);hover-background-color:rgba(67,76,94,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);border-radius:4px}
+.power-button{x:20px;y:190px;width:65px;height:15px;background-color:rgba(122,162,247,1);hover-background-color:rgba(102,138,196,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);border-radius:0;padding:0}
+.edit-button{background-color:rgba(122,162,247,1);hover-background-color:rgba(102,138,196,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);border-radius:0;padding:0;font-size:12px}
+.env-input{background-color:rgba(59,66,82,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);padding:0;font-size:12px;border-radius:0;width:150px;height:50px}
+.config{enable_recent_apps:true;max_search_results:5;enable_power_options:true;show_time:true;time_format:"%I:%M %p";time_order:MdyHms;enable_audio_control:false;max_volume:1.5;volume_update_interval_ms:500;power_commands:systemctl poweroff,loginctl poweroff,poweroff,halt;restart_commands:systemctl reboot,loginctl reboot,reboot;logout_commands:loginctl terminate-session $XDG_SESSION_ID,hyprctl dispatch exit,swaymsg exit,gnome-session-quit --logout --no-prompt,qdbus org.kde.ksmserver /KSMServer logout 0 0 0;enable_icons:true}
 "#;
 
 fn remove_comments(css: &str) -> String {
@@ -201,7 +201,6 @@ impl Theme {
                     }
                 };
             }
-            // Fix: properly update enable_recent_apps from the .config rule
             update_field!("enable_recent_apps", enable_recent_apps, bool);
             update_field!("max_search_results", max_search_results, usize);
             update_field!("enable_power_options", enable_power_options, bool);
@@ -616,7 +615,7 @@ impl eframe::App for EframeWrapper {
             .and_then(|s| self.theme.parse_color(&s))
             .unwrap_or(eframe::egui::Color32::BLACK);
         
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(main_w, main_h)));
+        ctx.send_viewport_cmd(eframe::egui::ViewportCommand::InnerSize(eframe::egui::vec2(main_w, main_h)));
         
         eframe::egui::Area::new("main-window".into())
             .fixed_pos(eframe::egui::pos2(0.0, 0.0))
@@ -625,7 +624,46 @@ impl eframe::App for EframeWrapper {
                 ui.set_min_size(eframe::egui::vec2(main_w, main_h));
                 ui.set_max_size(eframe::egui::vec2(main_w, main_h));
                 let rect = ui.max_rect();
-                ui.painter().rect_filled(rect, 0.0, bg);
+                // Check for a background image in .main-window
+                if let Some(bg_image_path) = self.theme.get_style("main-window", "background-image") {
+                    if !bg_image_path.is_empty() {
+                        if let Some(texture) = self.icon_manager.get_texture(ctx, &bg_image_path) {
+                            // Determine background sizing behavior
+                            let bg_size = self.theme.get_style("main-window", "background-size").unwrap_or("stretch".to_string());
+                            let image_size = texture.size_vec2();
+                            let (draw_rect, uv_rect) = match bg_size.as_str() {
+                                "fit" => {
+                                    let scale = (rect.width()/image_size.x).min(rect.height()/image_size.y);
+                                    let new_size = image_size * scale;
+                                    let offset = (rect.size() - new_size) * 0.5;
+                                    let dr = eframe::egui::Rect::from_min_size(rect.min + offset, new_size);
+                                    (dr, eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0)))
+                                },
+                                "fill" => {
+                                    let scale = (rect.width()/image_size.x).max(rect.height()/image_size.y);
+                                    let new_size = image_size * scale;
+                                    let offset = (new_size - rect.size()) * 0.5;
+                                    let uv_min = eframe::egui::Pos2::new(offset.x / new_size.x, offset.y / new_size.y);
+                                    let uv_max = eframe::egui::Pos2::new(1.0 - offset.x / new_size.x, 1.0 - offset.y / new_size.y);
+                                    (rect, eframe::egui::Rect::from_min_max(uv_min, uv_max))
+                                },
+                                "stretch" => {
+                                    (rect, eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0)))
+                                },
+                                _ => { // fallback to stretch behavior
+                                    (rect, eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0)))
+                                }
+                            };
+                            ui.painter().image(texture.id(), draw_rect, uv_rect, eframe::egui::Color32::WHITE);
+                        } else {
+                            ui.painter().rect_filled(rect, 0.0, bg);
+                        }
+                    } else {
+                        ui.painter().rect_filled(rect, 0.0, bg);
+                    }
+                } else {
+                    ui.painter().rect_filled(rect, 0.0, bg);
+                }
                 
                 let mut secs = vec!["search-bar", "app-list"];
                 if cfg.enable_audio_control { secs.push("volume-slider"); }
