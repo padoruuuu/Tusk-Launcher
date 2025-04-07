@@ -9,6 +9,8 @@ what it looks like with default theme.css:
 ![image](https://github.com/user-attachments/assets/1c9462c7-0d7f-4194-97b9-b8a1ed05a641)
 
 
+
+
 #INSTALLATION
 
 AUR: https://aur.archlinux.org/packages/tusk-launcher-git
@@ -20,6 +22,5 @@ Alternatively use the provided pkgbuild.
 
 Future plans:
 tray icon support: waiting on this https://gitlab.freedesktop.org/wayland/wayland-protocols/-/merge_requests/355
-setting images as backgrounds of the app. 
-merging config.toml and theme.css into 1 file. 
+
 allowing adding custom buttons that point to external applications in the css theme that would be displayed in the main window.
