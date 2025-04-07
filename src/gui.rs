@@ -22,7 +22,7 @@ const DEFAULT_THEME: &str = r#".main-window {background-color: rgba(0,0,0,0.9);w
 .power-button {x:20px;y:190px;width:65px;height:15px;background-color:rgba(122,162,247,1);hover-background-color:rgba(102,138,196,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);border-radius:0px;padding:0px;}
 .edit-button {background-color:rgba(122,162,247,1);hover-background-color:rgba(102,138,196,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);border-radius:0px;padding:0px;font-size:12px;}
 .env-input {background-color:rgba(59,66,82,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);padding:0px;font-size:12px;border-radius:0px;width:150px;height:50px;}
-.config {enable_recent_apps:true;max_search_results:5;enable_power_options:true;show_time:true;time_format:"%I:%M %p";time_order:MdyHms;enable_audio_control:false;max_volume:1.5;volume_update_interval_ms:500;power_commands:systemctl poweroff,loginctl poweroff,poweroff,halt;restart_commands:systemctl reboot,loginctl reboot,reboot;logout_commands:loginctl terminate-session $XDG_SESSION_ID,hyprctl dispatch exit,swaymsg exit,gnome-session-quit --logout --no-prompt,qdbus org.kde.ksmserver /KSMServer logout 0 0 0;enable_icons:false;}
+.config {enable_recent_apps:true;max_search_results:5;enable_power_options:true;show_time:true;time_format:"%I:%M %p";time_order:MdyHms;enable_audio_control:false;max_volume:1.5;volume_update_interval_ms:500;power_commands:systemctl poweroff,loginctl poweroff,poweroff,halt;restart_commands:systemctl reboot,loginctl reboot,reboot;logout_commands:loginctl terminate-session $XDG_SESSION_ID,hyprctl dispatch exit,swaymsg exit,gnome-session-quit --logout --no-prompt,qdbus org.kde.ksmserver /KSMServer logout 0 0 0;enable_icons:true;}
 "#;
 
 fn remove_comments(css: &str) -> String {
@@ -201,6 +201,8 @@ impl Theme {
                     }
                 };
             }
+            // Fix: properly update enable_recent_apps from the .config rule
+            update_field!("enable_recent_apps", enable_recent_apps, bool);
             update_field!("max_search_results", max_search_results, usize);
             update_field!("enable_power_options", enable_power_options, bool);
             update_field!("show_time", show_time, bool);
@@ -541,7 +543,6 @@ impl EframeWrapper {
                                 }
                             }
                             "icon" => {
-                                // Only render icon if enabled in the config
                                 if cfg.enable_icons {
                                     if let Some(icon_path) = self.app.get_icon_path(&app_name) {
                                         let icon_w = self.theme.get_px_value("app-icon", "width").unwrap_or(22.0);
@@ -608,23 +609,24 @@ impl eframe::App for EframeWrapper {
                 self.current_volume = self.audio_controller.get_volume();
             }
         }
-        let _bg = self.theme.get_style("main-window", "background-color")
-            .or_else(|| self.theme.get_style("env-input", "background-color"))
+        
+        let main_w = self.theme.get_px_value("main-window", "width").unwrap_or(300.0);
+        let main_h = self.theme.get_px_value("main-window", "height").unwrap_or(200.0);
+        let bg = self.theme.get_style("main-window", "background-color")
             .and_then(|s| self.theme.parse_color(&s))
             .unwrap_or(eframe::egui::Color32::BLACK);
         
-        // Properly get main window dimensions from theme.css
-        let main_w = self.theme.get_px_value("main-window", "width").unwrap_or(300.0);
-        let main_h = self.theme.get_px_value("main-window", "height").unwrap_or(200.0);
-        
-        // Set the window size using viewport command
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(main_w, main_h)));
         
         eframe::egui::Area::new("main-window".into())
             .fixed_pos(eframe::egui::pos2(0.0, 0.0))
             .show(ctx, |ui| {
+                self.theme.apply_style(ui, "main-window");
                 ui.set_min_size(eframe::egui::vec2(main_w, main_h));
                 ui.set_max_size(eframe::egui::vec2(main_w, main_h));
+                let rect = ui.max_rect();
+                ui.painter().rect_filled(rect, 0.0, bg);
+                
                 let mut secs = vec!["search-bar", "app-list"];
                 if cfg.enable_audio_control { secs.push("volume-slider"); }
                 if cfg.show_time { secs.push("time-display"); }
