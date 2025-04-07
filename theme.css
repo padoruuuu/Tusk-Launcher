@@ -2,7 +2,9 @@
 
 /* Main Window */
 .main-window {
-    background-color: rgba(0, 0, 0, 0.9);
+    background-color: rgba(1, 1, 1, .75);
+    background-image: /home/zeakz/mpv-shot0014.jpg;
+    background-size: stretch;
     width: 200px;
     height: 200px;
 }
