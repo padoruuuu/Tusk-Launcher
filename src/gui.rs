@@ -11,18 +11,19 @@ use eframe;
 use serde::{Deserialize, Serialize};
 use xdg;
 
-const DEFAULT_THEME: &str = r#".main-window{background-color:rgba(1,1,1,.75);background-image:/home/zeakz/mpv-shot0014.jpg;background-size:fill;width:200px;height:200px}
-.search-bar{x:20px;y:10px;width:150px;height:25px;background-color:rgba(59,66,82,1);hover-background-color:rgba(76,86,106,1);border-radius:0;text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);padding:0;font-size:12px}
-.app-list{x:2px;y:35px;width:109px;height:108px;background-color:rgba(46,52,64,1);padding:0;border-radius:0}
-.app-button{background-color:rgba(122,162,247,1);hover-background-color:rgba(102,138,196,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);border-radius:0;padding:0;font-size:12px;order:2}
-.app-icon{width:18px;height:18px;order:1}
-.settings-button{width:22px;height:22px;hover-text-color:rgba(102,138,196,0.5);text-color:rgba(122,162,247,1);font-size:16px;x-offset:10px;y-offset:-3px;order:0}
-.time-display{x:30px;y:160px;width:200px;height:50px;background-color:rgba(46,52,64,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);text-align:center}
-.volume-slider{x:40px;y:155px;width:200px;height:50px;background-color:rgba(46,52,64,1);hover-background-color:rgba(67,76,94,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);border-radius:4px}
-.power-button{x:20px;y:190px;width:65px;height:15px;background-color:rgba(122,162,247,1);hover-background-color:rgba(102,138,196,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);border-radius:0;padding:0}
-.edit-button{background-color:rgba(122,162,247,1);hover-background-color:rgba(102,138,196,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);border-radius:0;padding:0;font-size:12px}
-.env-input{background-color:rgba(59,66,82,1);text-color:rgba(236,239,244,1);hover-text-color:rgba(236,239,244,1);padding:0;font-size:12px;border-radius:0;width:150px;height:50px}
-.config{enable_recent_apps:true;max_search_results:5;enable_power_options:true;show_time:true;time_format:"%I:%M %p";time_order:MdyHms;enable_audio_control:false;max_volume:1.5;volume_update_interval_ms:500;power_commands:systemctl poweroff,loginctl poweroff,poweroff,halt;restart_commands:systemctl reboot,loginctl reboot,reboot;logout_commands:loginctl terminate-session $XDG_SESSION_ID,hyprctl dispatch exit,swaymsg exit,gnome-session-quit --logout --no-prompt,qdbus org.kde.ksmserver /KSMServer logout 0 0 0;enable_icons:true}
+const DEFAULT_THEME: &str = r#"
+.main-window {background-color: rgba(0,0,0,0.9); width:200px; height:200px; background-image: ""; background-size: stretch; background-opacity: 1.0;}
+.search-bar {x:20px; y:10px; width:150px; height:25px; background-color: rgba(59,66,82,1); hover-background-color: rgba(76,86,106,1); border-radius: 0px; text-color: rgba(236,239,244,1); hover-text-color: rgba(236,239,244,1); padding: 0px; font-size: 12px;}
+.app-list {x:2px; y:35px; width:109px; height:108px; background-color: rgba(46,52,64,1); padding: 0px; border-radius: 0px;}
+.app-button {background-color: rgba(122,162,247,1); hover-background-color: rgba(102,138,196,1); text-color: rgba(236,239,244,1); hover-text-color: rgba(236,239,244,1); border-radius: 0px; padding: 0px; font-size: 12px; order: 2;}
+.app-icon {width: 18px; height: 18px; order: 1;}
+.settings-button {width: 22px; height: 22px; hover-text-color: rgba(102,138,196,0.5); text-color: rgba(122,162,247,1); font-size: 16px; x-offset: 10px; y-offset: -3px; order: 0;}
+.time-display {x:30px; y:160px; width:200px; height:50px; background-color: rgba(46,52,64,1); text-color: rgba(236,239,244,1); hover-text-color: rgba(236,239,244,1); text-align: center;}
+.volume-slider {x:40px; y:155px; width:200px; height:50px; background-color: rgba(46,52,64,1); hover-background-color: rgba(67,76,94,1); text-color: rgba(236,239,244,1); hover-text-color: rgba(236,239,244,1); border-radius: 4px;}
+.power-button {x:20px; y:190px; width:65px; height:15px; background-color: rgba(122,162,247,1); hover-background-color: rgba(102,138,196,1); text-color: rgba(236,239,244,1); hover-text-color: rgba(236,239,244,1); border-radius: 0px; padding: 0px;}
+.edit-button {background-color: rgba(122,162,247,1); hover-background-color: rgba(102,138,196,1); text-color: rgba(236,239,244,1); hover-text-color: rgba(236,239,244,1); border-radius: 0px; padding: 0px; font-size: 12px;}
+.env-input {background-color: rgba(59,66,82,1); text-color: rgba(236,239,244,1); hover-text-color: rgba(236,239,244,1); padding: 0px; font-size: 12px; border-radius: 0px; width:150px; height:50px;}
+.config {enable_recent_apps:true; max_search_results:5; enable_power_options:true; show_time:true; time_format:"%I:%M %p"; time_order:MdyHms; enable_audio_control:false; max_volume:1.5; volume_update_interval_ms:500; power_commands:systemctl poweroff,loginctl poweroff,poweroff,halt; restart_commands:systemctl reboot,loginctl reboot,reboot; logout_commands:loginctl terminate-session $XDG_SESSION_ID,hyprctl dispatch exit,swaymsg exit,gnome-session-quit --logout --no-prompt,qdbus org.kde.ksmserver /KSMServer logout 0 0 0; enable_icons:true;}
 "#;
 
 fn remove_comments(css: &str) -> String {
@@ -79,24 +80,9 @@ impl Default for Config {
             enable_audio_control: true,
             max_volume: 1.5,
             volume_update_interval_ms: 500,
-            power_commands: vec![
-                "systemctl poweroff".into(),
-                "loginctl poweroff".into(),
-                "poweroff".into(),
-                "halt".into(),
-            ],
-            restart_commands: vec![
-                "systemctl reboot".into(),
-                "loginctl reboot".into(),
-                "reboot".into(),
-            ],
-            logout_commands: vec![
-                "loginctl terminate-session $XDG_SESSION_ID".into(),
-                "hyprctl dispatch exit".into(),
-                "swaymsg exit".into(),
-                "gnome-session-quit --logout --no-prompt".into(),
-                "qdbus org.kde.ksmserver /KSMServer logout 0 0 0".into(),
-            ],
+            power_commands: vec!["systemctl poweroff".into(), "loginctl poweroff".into(), "poweroff".into(), "halt".into()],
+            restart_commands: vec!["systemctl reboot".into(), "loginctl reboot".into(), "reboot".into()],
+            logout_commands: vec!["loginctl terminate-session $XDG_SESSION_ID".into(), "hyprctl dispatch exit".into(), "swaymsg exit".into(), "gnome-session-quit --logout --no-prompt".into(), "qdbus org.kde.ksmserver /KSMServer logout 0 0 0".into()],
             enable_icons: true,
             icon_cache_dir,
         }
@@ -113,7 +99,7 @@ pub fn format_datetime(datetime: &DateTime<Local>, config: &Config) -> String {
 
 #[derive(Serialize, Deserialize, Clone)]
 struct Rule { class_name: String, props: HashMap<String, String>, }
-pub struct Theme { rules: Vec<Rule>, }
+pub struct Theme { rules: Vec<Rule> }
 impl Theme {
     pub fn load_or_create() -> Result<Self, Box<dyn Error>> {
         let dirs = xdg::BaseDirectories::new()?;
@@ -142,8 +128,7 @@ impl Theme {
                     let props = block.split(';')
                         .filter_map(|decl| {
                             let decl = decl.trim();
-                            if decl.is_empty() { None }
-                            else { decl.split_once(':').map(|(k, v)| (k.trim().to_string(), v.trim().to_string())) }
+                            decl.split_once(':').map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
                         })
                         .collect();
                     rules.push(Rule { class_name, props });
@@ -222,9 +207,7 @@ impl Theme {
             update_field!("enable_icons", enable_icons, bool);
             if let Some(val) = rule.props.get("icon_cache_dir") {
                 let trimmed = val.trim().trim_matches('"');
-                if !trimmed.is_empty() {
-                    config.icon_cache_dir = PathBuf::from(trimmed);
-                }
+                if !trimmed.is_empty() { config.icon_cache_dir = PathBuf::from(trimmed); }
             }
         }
         config
@@ -250,32 +233,21 @@ impl Theme {
         if let Some(tc) = self.get_style(class, "text-color").and_then(|s| self.parse_color(&s)) {
             style.visuals.override_text_color = Some(tc);
         }
-        if let Some(pad) = self.get_style(class, "padding")
-            .and_then(|s| s.replace("px", "").parse::<f32>().ok())
-        {
+        if let Some(pad) = self.get_style(class, "padding").and_then(|s| s.replace("px", "").parse::<f32>().ok()) {
             style.spacing.item_spacing = eframe::egui::vec2(pad, pad);
             style.spacing.window_margin = eframe::egui::Margin::symmetric(pad as i8, pad as i8);
         }
-        if let Some(rad) = self.get_style(class, "border-radius")
-            .and_then(|s| s.replace("px", "").parse::<f32>().ok())
-        {
+        if let Some(rad) = self.get_style(class, "border-radius").and_then(|s| s.replace("px", "").parse::<f32>().ok()) {
             let r = eframe::egui::CornerRadius::same(rad as u8);
-            for widget in [
-                &mut style.visuals.widgets.noninteractive,
-                &mut style.visuals.widgets.inactive,
-                &mut style.visuals.widgets.hovered,
-                &mut style.visuals.widgets.active,
-            ].iter_mut()
-            {
+            for widget in [&mut style.visuals.widgets.noninteractive,
+                           &mut style.visuals.widgets.inactive,
+                           &mut style.visuals.widgets.hovered,
+                           &mut style.visuals.widgets.active].iter_mut() {
                 widget.corner_radius = r;
             }
         }
-        if let Some(sz) = self.get_style(class, "font-size")
-            .and_then(|s| s.replace("px", "").parse::<f32>().ok())
-        {
-            if let Some(text) = style.text_styles.get_mut(&eframe::egui::TextStyle::Body) {
-                text.size = sz;
-            }
+        if let Some(sz) = self.get_style(class, "font-size").and_then(|s| s.replace("px", "").parse::<f32>().ok()) {
+            if let Some(text) = style.text_styles.get_mut(&eframe::egui::TextStyle::Body) { text.size = sz; }
         }
     }
     pub fn apply_style(&self, ui: &mut eframe::egui::Ui, class: &str) {
@@ -302,9 +274,7 @@ impl Theme {
             .and_then(|s| self.parse_color(&s))
             .unwrap_or(base);
         set_widget_bg(style, base, hover);
-        if let Some(tc) = self.get_combined_style(classes, "text-color")
-            .and_then(|s| self.parse_color(&s))
-        {
+        if let Some(tc) = self.get_combined_style(classes, "text-color").and_then(|s| self.parse_color(&s)) {
             style.visuals.override_text_color = Some(tc);
         }
     }
@@ -321,17 +291,12 @@ impl Theme {
 fn set_widget_bg(style: &mut eframe::egui::Style, base: eframe::egui::Color32, hover: eframe::egui::Color32) {
     let transparent = eframe::egui::Color32::TRANSPARENT;
     let w = &mut style.visuals.widgets;
-    w.inactive.bg_fill = base;
-    w.hovered.bg_fill = hover;
-    w.hovered.weak_bg_fill = hover;
-    w.active.bg_fill = base;
-    w.inactive.weak_bg_fill = base;
-    w.active.weak_bg_fill = base;
+    w.inactive.bg_fill = base; w.hovered.bg_fill = hover; w.hovered.weak_bg_fill = hover;
+    w.active.bg_fill = base; w.inactive.weak_bg_fill = base; w.active.weak_bg_fill = base;
     w.inactive.bg_stroke = eframe::egui::Stroke::new(0.0, transparent);
     w.hovered.bg_stroke = eframe::egui::Stroke::new(0.0, transparent);
     w.active.bg_stroke = eframe::egui::Stroke::new(0.0, transparent);
-    w.hovered.expansion = 0.0;
-    w.active.expansion = 0.0;
+    w.hovered.expansion = 0.0; w.active.expansion = 0.0;
 }
 fn custom_button(ui: &mut eframe::egui::Ui, label: &str, class: &str, theme: &Theme) -> eframe::egui::Response {
     let text_style = eframe::egui::TextStyle::Button;
@@ -355,27 +320,27 @@ fn custom_button(ui: &mut eframe::egui::Ui, label: &str, class: &str, theme: &Th
     response
 }
 fn with_custom_style<R>(ui: &mut eframe::egui::Ui, modify: impl FnOnce(&mut eframe::egui::Style), f: impl FnOnce(&mut eframe::egui::Ui) -> R) -> R {
-    let old = ui.style().as_ref().clone();
+    let old = ui.style().clone();
     modify(ui.style_mut());
     let res = f(ui);
-    *ui.style_mut() = old;
+    *ui.style_mut() = (*old).clone();
     res
 }
 fn with_alignment<R>(ui: &mut eframe::egui::Ui, theme: &Theme, sec: &str, f: impl FnOnce(&mut eframe::egui::Ui) -> R) -> R {
     if let Some(pos) = theme.get_style(sec, "position") {
         let layout = match pos.as_str() {
             "center" => eframe::egui::Layout::centered_and_justified(eframe::egui::Direction::LeftToRight),
-            "left"   => eframe::egui::Layout::left_to_right(eframe::egui::Align::Min),
-            "right"  => eframe::egui::Layout::right_to_left(eframe::egui::Align::Max),
-            _        => eframe::egui::Layout::default(),
+            "left" => eframe::egui::Layout::left_to_right(eframe::egui::Align::Min),
+            "right" => eframe::egui::Layout::right_to_left(eframe::egui::Align::Max),
+            _ => eframe::egui::Layout::default(),
         };
         ui.with_layout(layout, f).inner
     } else if let Some(align) = theme.get_style(sec, "align") {
         let layout = match align.as_str() {
             "center" => eframe::egui::Layout::left_to_right(eframe::egui::Align::Center),
-            "right"  => eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
-            "left"   => eframe::egui::Layout::left_to_right(eframe::egui::Align::Min),
-            _        => eframe::egui::Layout::default(),
+            "right" => eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
+            "left" => eframe::egui::Layout::left_to_right(eframe::egui::Align::Min),
+            _ => eframe::egui::Layout::default(),
         };
         ui.with_layout(layout, f).inner
     } else { f(ui) }
@@ -411,9 +376,7 @@ impl EframeGui {
         let audio = crate::audio::AudioController::new(&cfg)?;
         audio.start_polling(&cfg);
         eframe::run_native("Application Launcher", native_options, Box::new(move |cc| {
-            if let Some(scaling) = theme.get_style("env-input", "scaling")
-                .and_then(|s| s.trim().parse::<f32>().ok())
-            {
+            if let Some(scaling) = theme.get_style("env-input", "scaling").and_then(|s| s.trim().parse::<f32>().ok()) {
                 cc.egui_ctx.set_pixels_per_point(scaling);
             }
             cc.egui_ctx.request_repaint();
@@ -458,9 +421,7 @@ impl EframeWrapper {
                     let mut query = self.app.get_query();
                     let resp = ui.add(eframe::egui::TextEdit::singleline(&mut query).hint_text("Search...").frame(false));
                     if !self.focused { resp.request_focus(); self.focused = true; }
-                    if resp.changed() && !query.starts_with("LAUNCH_OPTIONS:") {
-                        self.app.handle_input(&query);
-                    }
+                    if resp.changed() && !query.starts_with("LAUNCH_OPTIONS:") { self.app.handle_input(&query); }
                 })
             });
         });
@@ -469,17 +430,10 @@ impl EframeWrapper {
         with_alignment(ui, &self.theme, "volume-slider", |ui| {
             self.theme.apply_style(ui, "volume-slider");
             ui.horizontal(|ui| {
-                if let Some(gap) = self.theme.get_px_value("volume-slider", "gap") {
-                    ui.spacing_mut().item_spacing.x = gap;
-                }
+                if let Some(gap) = self.theme.get_px_value("volume-slider", "gap") { ui.spacing_mut().item_spacing.x = gap; }
                 ui.label("Volume:");
                 let (base, hover, round) = self.theme.get_frame_properties("volume-slider", ui.style().visuals.widgets.inactive.bg_fill);
-                let slider_vis = {
-                    let mut s = ui.style().visuals.widgets.inactive.clone();
-                    s.bg_fill = base;
-                    s.corner_radius = round;
-                    s
-                };
+                let slider_vis = { let mut s = ui.style().visuals.widgets.inactive.clone(); s.bg_fill = base; s.corner_radius = round; s };
                 with_custom_style(ui, |s| {
                     s.visuals.widgets.inactive = slider_vis.clone();
                     s.visuals.widgets.hovered.bg_fill = hover.unwrap_or(base);
@@ -493,12 +447,8 @@ impl EframeWrapper {
                 }, |ui| {
                     let slider = eframe::egui::Slider::new(&mut self.current_volume, 0.0..=self.theme.get_config().max_volume)
                         .custom_formatter(|n, _| format!("{:.0}%", n * 100.0))
-                        .custom_parser(|s| {
-                            s.trim().trim_end_matches('%').parse::<f64>().ok().map(|n| n / 100.0)
-                        });
-                    if ui.add(slider).changed() {
-                        let _ = self.audio_controller.set_volume(self.current_volume);
-                    }
+                        .custom_parser(|s| s.trim().trim_end_matches('%').parse::<f64>().ok().map(|n| n / 100.0));
+                    if ui.add(slider).changed() { let _ = self.audio_controller.set_volume(self.current_volume); }
                 });
             });
         });
@@ -540,7 +490,7 @@ impl EframeWrapper {
                                     let prepop = self.app.get_formatted_launch_options(&app_name);
                                     self.editing = Some((app_name.clone(), prepop));
                                 }
-                            }
+                            },
                             "icon" => {
                                 if cfg.enable_icons {
                                     if let Some(icon_path) = self.app.get_icon_path(&app_name) {
@@ -552,15 +502,15 @@ impl EframeWrapper {
                                         }
                                     }
                                 }
-                            }
+                            },
                             "app" => {
                                 with_custom_style(ui, |s| { self.theme.apply_combined_widget_style(s, &["app-button"]); }, |ui| {
                                     if custom_button(ui, &app_name, "app-button", &self.theme).clicked() {
                                         self.app.launch_app(&app_name);
                                     }
                                 });
-                            }
-                            _ => {}
+                            },
+                            _ => {},
                         }
                     }
                 });
@@ -603,11 +553,7 @@ impl eframe::App for EframeWrapper {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
         self.app.update();
         let cfg = self.theme.get_config();
-        if cfg.enable_audio_control {
-            if self.audio_controller.update_volume().is_ok() {
-                self.current_volume = self.audio_controller.get_volume();
-            }
-        }
+        if cfg.enable_audio_control { if self.audio_controller.update_volume().is_ok() { self.current_volume = self.audio_controller.get_volume(); } }
         
         let main_w = self.theme.get_px_value("main-window", "width").unwrap_or(300.0);
         let main_h = self.theme.get_px_value("main-window", "height").unwrap_or(200.0);
@@ -616,7 +562,6 @@ impl eframe::App for EframeWrapper {
             .unwrap_or(eframe::egui::Color32::BLACK);
         
         ctx.send_viewport_cmd(eframe::egui::ViewportCommand::InnerSize(eframe::egui::vec2(main_w, main_h)));
-        
         eframe::egui::Area::new("main-window".into())
             .fixed_pos(eframe::egui::pos2(0.0, 0.0))
             .show(ctx, |ui| {
@@ -624,11 +569,9 @@ impl eframe::App for EframeWrapper {
                 ui.set_min_size(eframe::egui::vec2(main_w, main_h));
                 ui.set_max_size(eframe::egui::vec2(main_w, main_h));
                 let rect = ui.max_rect();
-                // Check for a background image in .main-window
                 if let Some(bg_image_path) = self.theme.get_style("main-window", "background-image") {
                     if !bg_image_path.is_empty() {
                         if let Some(texture) = self.icon_manager.get_texture(ctx, &bg_image_path) {
-                            // Determine background sizing behavior
                             let bg_size = self.theme.get_style("main-window", "background-size").unwrap_or("stretch".to_string());
                             let image_size = texture.size_vec2();
                             let (draw_rect, uv_rect) = match bg_size.as_str() {
@@ -636,8 +579,8 @@ impl eframe::App for EframeWrapper {
                                     let scale = (rect.width()/image_size.x).min(rect.height()/image_size.y);
                                     let new_size = image_size * scale;
                                     let offset = (rect.size() - new_size) * 0.5;
-                                    let dr = eframe::egui::Rect::from_min_size(rect.min + offset, new_size);
-                                    (dr, eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0)))
+                                    (eframe::egui::Rect::from_min_size(rect.min + offset, new_size),
+                                     eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0)))
                                 },
                                 "fill" => {
                                     let scale = (rect.width()/image_size.x).max(rect.height()/image_size.y);
@@ -647,23 +590,16 @@ impl eframe::App for EframeWrapper {
                                     let uv_max = eframe::egui::Pos2::new(1.0 - offset.x / new_size.x, 1.0 - offset.y / new_size.y);
                                     (rect, eframe::egui::Rect::from_min_max(uv_min, uv_max))
                                 },
-                                "stretch" => {
-                                    (rect, eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0)))
-                                },
-                                _ => { // fallback to stretch behavior
-                                    (rect, eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0)))
-                                }
+                                "stretch" => (rect, eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0))),
+                                _ => (rect, eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0))) // fallback
                             };
-                            ui.painter().image(texture.id(), draw_rect, uv_rect, eframe::egui::Color32::WHITE);
-                        } else {
-                            ui.painter().rect_filled(rect, 0.0, bg);
-                        }
-                    } else {
-                        ui.painter().rect_filled(rect, 0.0, bg);
-                    }
-                } else {
-                    ui.painter().rect_filled(rect, 0.0, bg);
-                }
+                            let opacity: f32 = self.theme.get_style("main-window", "background-opacity")
+                                .and_then(|s| s.parse::<f32>().ok()).unwrap_or(1.0);
+                            let tint = eframe::egui::Color32::from_white_alpha((opacity * 255.0) as u8);
+                            ui.painter().image(texture.id(), draw_rect, uv_rect, tint);
+                        } else { ui.painter().rect_filled(rect, 0.0, bg); }
+                    } else { ui.painter().rect_filled(rect, 0.0, bg); }
+                } else { ui.painter().rect_filled(rect, 0.0, bg); }
                 
                 let mut secs = vec!["search-bar", "app-list"];
                 if cfg.enable_audio_control { secs.push("volume-slider"); }
@@ -684,9 +620,7 @@ impl eframe::App for EframeWrapper {
                             }
                             self.render_section(ui, sec, ctx);
                         });
-                    } else {
-                        self.render_section(ui, sec, ctx);
-                    }
+                    } else { self.render_section(ui, sec, ctx); }
                 }
             });
         if let Some((ref mut app_name, ref mut opts)) = self.editing {
@@ -695,8 +629,7 @@ impl eframe::App for EframeWrapper {
             let env_bg = self.theme.get_style("env-input", "background-color")
                 .and_then(|s| self.theme.parse_color(&s))
                 .unwrap_or(eframe::egui::Color32::TRANSPARENT);
-            let mut save = false;
-            let mut cancel = false;
+            let mut save = false; let mut cancel = false;
             let area = eframe::egui::Area::new("env-input".to_string().into())
                 .order(eframe::egui::Order::Foreground)
                 .movable(true)
@@ -722,13 +655,8 @@ impl eframe::App for EframeWrapper {
                     });
                 });
             });
-            if save {
-                let res = format!("LAUNCH_OPTIONS:{}:{}", app_name, opts);
-                self.app.handle_input(&res);
-                self.editing = None;
-            } else if cancel {
-                self.editing = None;
-            }
+            if save { self.app.handle_input(&format!("LAUNCH_OPTIONS:{}:{}", app_name, opts)); self.editing = None; }
+            else if cancel { self.editing = None; }
         }
         let esc = ctx.input(|i| i.key_pressed(eframe::egui::Key::Escape));
         let enter = ctx.input(|i| i.key_pressed(eframe::egui::Key::Enter));
