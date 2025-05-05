@@ -1,229 +1,136 @@
 mod clock;
 mod power;
-mod cache;
-mod app_launcher;
+mod app_cache;
 mod gui;
 mod audio;
 
-use std::process;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
-use std::io::{self, ErrorKind};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write, ErrorKind};
+use std::os::unix::io::AsRawFd;
+use std::path::PathBuf;
+use std::process::{self, Command, Stdio};
+use xdg::BaseDirectories;
 
-use crate::gui::{EframeGui, load_theme};
+use crate::gui::{EframeGui, load_theme}; // load_theme() is a public function re-exporting Theme::load_or_create()
 use crate::clock::get_current_time;
 
-// Using a local socket for instance management instead of a PID file
-use std::net::{TcpListener, TcpStream};
-use std::io::{Read, Write};
-
-const PORT: u16 = 41758; // Arbitrary port number for our app
-const CMD_FOCUS: &[u8] = b"FOCUS";
-const CMD_CLOSE: &[u8] = b"CLOSE";
-const CMD_TOGGLE: &[u8] = b"TOGGL";
-const RESP_OK: &[u8] = b"DONE!";
-
-struct InstanceServer {
-    listener: Option<TcpListener>,
-    shutdown: Arc<AtomicBool>,
+/// Determine the PID file path using the xdg runtime directory.
+fn get_pid_file_path() -> io::Result<PathBuf> {
+    let xdg_dirs = BaseDirectories::with_prefix("Tusk-Launcher")
+        .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+    // place_runtime_file creates (if needed) and returns the full path for the given file.
+    xdg_dirs.place_runtime_file("tusk-launcher.pid")
 }
 
-impl InstanceServer {
-    fn new() -> io::Result<Self> {
-        // Try to bind to the port - if it fails, another instance is already running
-        let listener = match TcpListener::bind(("127.0.0.1", PORT)) {
-            Ok(listener) => listener,
-            Err(e) if e.kind() == ErrorKind::AddrInUse => {
-                // Another instance is already listening
-                return Err(io::Error::new(ErrorKind::AddrInUse, "Another instance is already running"));
-            },
-            Err(e) => return Err(e),
-        };
-        
-        // Make listener non-blocking
-        listener.set_nonblocking(true)?;
-        
-        Ok(Self {
-            listener: Some(listener),
-            shutdown: Arc::new(AtomicBool::new(false)),
-        })
+/// A guard that holds the PID file.
+/// When dropped, it removes the PID file.
+struct PidFileGuard {
+    file: File,
+    path: PathBuf,
+}
+
+impl Drop for PidFileGuard {
+    fn drop(&mut self) {
+        // Actively use the file field to ensure the lock remains held until drop.
+        let _ = self.file.as_raw_fd();
+        // Remove the PID file on drop.
+        let _ = fs::remove_file(&self.path);
     }
-    
-    fn run(&mut self) -> io::Result<()> {
-        let listener = self.listener.take().expect("Listener was already taken");
-        let shutdown = self.shutdown.clone();
-        
-        // Spawn a thread to handle incoming connections
-        thread::spawn(move || {
-            while !shutdown.load(Ordering::Relaxed) {
-                match listener.accept() {
-                    Ok((mut stream, _)) => {
-                        let mut buffer = [0; 5];
-                        if let Ok(_) = stream.read_exact(&mut buffer) {
-                            if &buffer == CMD_FOCUS {
-                                // Send application to foreground
-                                Self::bring_to_foreground();
-                                // Confirm to the client
-                                let _ = stream.write_all(RESP_OK);
-                            } else if &buffer == CMD_CLOSE || &buffer == CMD_TOGGLE {
-                                println!("Received close/toggle command");
-                                // Confirm receipt before closing
-                                let _ = stream.write_all(RESP_OK);
-                                // Set shutdown flag
-                                shutdown.store(true, Ordering::Relaxed);
-                                // Exit the application
-                                thread::spawn(|| {
-                                    thread::sleep(Duration::from_millis(100));
-                                    println!("Exiting on request");
-                                    process::exit(0);
-                                });
-                                break;
+}
+
+/// Check if a process with the given PID exists by sending a 0 signal.
+fn process_exists(pid: u32) -> bool {
+    Command::new("kill")
+        .args(&["-0", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Read the PID from the given PID file path.
+fn read_pid_from_file(path: &PathBuf) -> io::Result<u32> {
+    let content = fs::read_to_string(path)?;
+    content.trim().parse::<u32>().map_err(|e| {
+        io::Error::new(ErrorKind::InvalidData, format!("Failed to parse PID from file: {}", e))
+    })
+}
+
+/// Acquire a lock by atomically creating a PID file.
+/// If the file already exists, check if the process is running.
+/// If it is, attempt to send a focus signal and exit;
+/// if not, remove the stale file and retry.
+fn acquire_pid_lock() -> io::Result<PidFileGuard> {
+    let pid_path = get_pid_file_path()?;
+    loop {
+        match OpenOptions::new().write(true).create_new(true).open(&pid_path) {
+            Ok(mut file) => {
+                // Successfully created the PID file; write our PID.
+                let pid = process::id();
+                file.write_all(pid.to_string().as_bytes())?;
+                file.flush()?;
+                return Ok(PidFileGuard { file, path: pid_path });
+            }
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                // PID file already exists; check if the process is alive.
+                match read_pid_from_file(&pid_path) {
+                    Ok(existing_pid) => {
+                        if process_exists(existing_pid) {
+                            // Send a focus signal to the running instance.
+                            if send_focus_signal(existing_pid).is_ok() {
+                                println!("Focused existing instance (PID {})", existing_pid);
+                                std::process::exit(0);
                             }
+                            return Err(io::Error::new(ErrorKind::AlreadyExists, "Instance already running"));
+                        } else {
+                            // Stale PID file found; remove it and retry.
+                            let _ = fs::remove_file(&pid_path);
+                            continue;
                         }
-                    },
-                    Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                        // No connections available right now
-                        thread::sleep(Duration::from_millis(50));
+                    }
+                    Err(_) => {
+                        // If we can’t read the PID, assume the file is stale.
+                        let _ = fs::remove_file(&pid_path);
                         continue;
-                    },
-                    Err(_) => break,
+                    }
                 }
             }
-        });
-        
-        Ok(())
-    }
-    
-    fn bring_to_foreground() {
-        // This would use whatever windowing system mechanism is appropriate
-        // For example, sending a SIGUSR1 to self, or using X11/Wayland APIs
-        
-        // For demonstration, we'll simulate by printing a message
-        println!("Instance requested to come to foreground");
-        
-        // In a real application, you would handle foreground focus using GUI toolkit mechanisms
-        // For example:
-        // - Using egui's request_focus() method
-        // - Sending a signal to the main thread
-        // - Using X11/Wayland APIs to raise the window
+            Err(e) => return Err(e),
+        }
     }
 }
 
-impl Drop for InstanceServer {
-    fn drop(&mut self) {
-        // Signal the thread to shut down
-        self.shutdown.store(true, Ordering::Relaxed);
-        // Let the thread finish
-        thread::sleep(Duration::from_millis(100));
+/// Send a focus signal (SIGUSR1) to the process with the given PID.
+fn send_focus_signal(pid: u32) -> io::Result<()> {
+    let status = Command::new("kill")
+        .args(&["-SIGUSR1", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::new(ErrorKind::Other, "Failed to send focus signal"))
     }
 }
 
 fn main() {
-    // Check if we're being asked to perform a specific action
-    let command = std::env::args().nth(1).unwrap_or_default();
-    
-    // Connect to any existing instance and handle according to command
-    match TcpStream::connect(("127.0.0.1", PORT)) {
-        Ok(mut stream) => {
-            // If no specific command was given, treat a second launch as a close command
-            // This ensures launching while open closes the app
-            let cmd = match command.as_str() {
-                "--close" => CMD_CLOSE,
-                "--toggle" => CMD_TOGGLE,
-                "--focus" => CMD_FOCUS,
-                _ => {
-                    // Default behavior: closing existing instance
-                    println!("Found running instance, sending close command...");
-                    CMD_CLOSE
-                }
-            };
-            
-            // Send the command
-            if let Err(e) = stream.write_all(cmd) {
-                eprintln!("Failed to send command: {}", e);
-                std::process::exit(1);
-            }
-            
-            // Wait for confirmation or timeout
-            let mut buffer = [0; 5];
-            match stream.read_exact(&mut buffer) {
-                Ok(_) => {
-                    if &buffer == RESP_OK {
-                        if cmd == CMD_CLOSE {
-                            println!("Close command acknowledged, existing instance will shut down");
-                        } else if cmd == CMD_FOCUS {
-                            println!("Focus command acknowledged, bringing existing instance to front");
-                        } else {
-                            println!("Command acknowledged by existing instance");
-                        }
-                    } else {
-                        println!("Got unexpected response from existing instance");
-                    }
-                },
-                Err(e) => {
-                    // This could happen if the instance closes quickly
-                    println!("Connection closed: {}", e);
-                }
-            }
-            
-            // For any command to an existing instance, we exit
-            // This ensures that after closing, a new launch is required
-            std::process::exit(0);
-        },
-        Err(_) => {
-            // No instance running
-            if command == "--close" {
-                println!("No running instance found");
-                std::process::exit(0);
-            }
-            // For other commands, continue to start a new instance
-        }
-    }
-    
-    // Set up our instance server
-    // First handle the case where an instance might be in the middle of shutting down
-    let mut retry_count = 0;
-    let max_retries = 3;
-    
-    let mut server = loop {
-        match InstanceServer::new() {
-            Ok(server) => break server,
-            Err(e) => {
-                eprintln!("Failed to set up instance server: {}", e);
-                
-                // If port is in use and we haven't reached max retries, wait and try again
-                if e.kind() == ErrorKind::AddrInUse && retry_count < max_retries {
-                    retry_count += 1;
-                    eprintln!("Another instance may be shutting down. Waiting... (attempt {}/{})", 
-                             retry_count, max_retries);
-                    thread::sleep(Duration::from_millis(500));
-                    continue;
-                }
-                
-                // If we get here, we've either reached max retries or encountered a different error
-                if e.kind() == ErrorKind::AddrInUse {
-                    eprintln!("Another instance is still running. Please close it first or try again later.");
-                } else {
-                    eprintln!("Unexpected error: {}", e);
-                }
-                std::process::exit(1);
-            }
+    // Attempt to acquire the PID lock.
+    let _pid_guard = match acquire_pid_lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            eprintln!("Failed to acquire PID lock: {}", e);
+            std::process::exit(1);
         }
     };
-    
-    if let Err(e) = server.run() {
-        eprintln!("Failed to run instance server: {}", e);
-        std::process::exit(1);
-    }
 
-    // Load the theme (which includes both theme rules and configuration)
+    // Load the theme (which includes both theme rules and configuration).
     let theme = load_theme().expect("Failed to load theme");
     let config = theme.get_config();
     println!("Current time: {}", get_current_time(&config));
 
-    let app = Box::new(app_launcher::AppLauncher::default());
+    let app = Box::new(app_cache::AppLauncher::default());
     if let Err(e) = EframeGui::run(app) {
         eprintln!("Error running application: {}", e);
         std::process::exit(1);
