@@ -49,21 +49,14 @@ fn main() {
     });
 
     // Load theme and run GUI
-    match load_theme() {
-        Ok(theme) => {
-            println!("Current time: {}", get_current_time(&theme.get_config()));
-            
-            // Run the GUI on the main thread
-            let app = Box::new(app_cache::AppLauncher::default());
-            if let Err(e) = EframeGui::run(app) {
-                eprintln!("Error running GUI: {}", e);
-                process::exit(1);
-            }
-        },
-        Err(e) => {
-            eprintln!("Failed to load theme: {}", e);
-            process::exit(1);
-        }
+    let theme = load_theme();
+    println!("Current time: {}", get_current_time(&theme.get_config()));
+    
+    // Run the GUI on the main thread
+    let app = Box::new(app_cache::AppLauncher::default());
+    if let Err(e) = EframeGui::run(app) {
+        eprintln!("Error running GUI: {}", e);
+        process::exit(1);
     }
 
     println!("Application exiting normally");
