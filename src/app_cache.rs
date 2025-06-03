@@ -24,15 +24,13 @@ pub struct AppLaunchOptions {
 
 impl std::fmt::Display for AppLaunchOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let custom = self.custom_command.as_deref().unwrap_or("");
-        let working = self.working_directory.as_deref().unwrap_or("");
-        let env_str = self
-            .environment_vars
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect::<Vec<_>>()
-            .join(",");
-        write!(f, "{}|{}|{}", custom, working, env_str)
+        write!(f, "{}|{}|{}", 
+            self.custom_command.as_deref().unwrap_or(""),
+            self.working_directory.as_deref().unwrap_or(""),
+            self.environment_vars.iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect::<Vec<_>>().join(",")
+        )
     }
 }
 
@@ -40,20 +38,17 @@ impl FromStr for AppLaunchOptions {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let parts: Vec<&str> = s.splitn(3, '|').collect();
-        if parts.len() != 3 {
-            return Err("Invalid format for AppLaunchOptions".into());
-        }
-        let custom = if parts[0].is_empty() { None } else { Some(parts[0].to_string()) };
-        let working = if parts[1].is_empty() { None } else { Some(parts[1].to_string()) };
-        let mut environment_vars = HashMap::new();
-        if !parts[2].is_empty() {
-            for entry in parts[2].split(',') {
-                if let Some((k, v)) = entry.split_once('=') {
-                    environment_vars.insert(k.to_string(), v.to_string());
-                }
+        if parts.len() != 3 { return Err("Invalid format".into()); }
+        
+        Ok(AppLaunchOptions {
+            custom_command: if parts[0].is_empty() { None } else { Some(parts[0].to_string()) },
+            working_directory: if parts[1].is_empty() { None } else { Some(parts[1].to_string()) },
+            environment_vars: if parts[2].is_empty() { HashMap::new() } else {
+                parts[2].split(',').filter_map(|entry| 
+                    entry.split_once('=').map(|(k, v)| (k.to_string(), v.to_string()))
+                ).collect()
             }
-        }
-        Ok(AppLaunchOptions { custom_command: custom, working_directory: working, environment_vars })
+        })
     }
 }
 
@@ -113,24 +108,17 @@ impl IconManager {
     }
 
     fn load_image(path: &str) -> Result<egui::ColorImage, Box<dyn std::error::Error>> {
-        if path.to_lowercase().ends_with(".svg") {
-            let data = fs::read(path)?;
-            let tree = usvg::Tree::from_data(&data, &usvg::Options::default())?;
-            let size = tree.size().to_int_size();
-            let mut pixmap = Pixmap::new(size.width(), size.height()).ok_or("Failed to create pixmap")?;
-            resvg::render(&tree, usvg::Transform::default(), &mut pixmap.as_mut());
-            Ok(egui::ColorImage::from_rgba_unmultiplied(
-                [size.width() as usize, size.height() as usize],
-                pixmap.data(),
-            ))
-        } else {
-            let img = image::open(path)?.into_rgba8();
-            Ok(egui::ColorImage::from_rgba_unmultiplied(
-                [img.width() as usize, img.height() as usize],
-                &img,
-            ))
-        }
+    if path.to_lowercase().ends_with(".svg") {
+        let tree = usvg::Tree::from_data(&fs::read(path)?, &usvg::Options::default())?;
+        let size = tree.size().to_int_size();
+        let mut pixmap = Pixmap::new(size.width(), size.height()).ok_or("Failed to create pixmap")?;
+        resvg::render(&tree, usvg::Transform::default(), &mut pixmap.as_mut());
+        Ok(egui::ColorImage::from_rgba_unmultiplied([size.width() as usize, size.height() as usize], pixmap.data()))
+    } else {
+        let img = image::open(path)?.into_rgba8();
+        Ok(egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], &img))
     }
+}
 
     fn create_placeholder() -> egui::ColorImage {
         egui::ColorImage::from_rgba_unmultiplied([16, 16], &[127u8; 16 * 16 * 4])
@@ -176,31 +164,34 @@ fn unescape(s: &str) -> String {
 fn serialize_cache(cache: &AppCache) -> String {
     let mut s = String::from("APP_CACHE_V1\n");
     for (app_name, entry) in &cache.apps {
-        let name_escaped = escape(app_name);
-        let launch_options_escaped = entry.launch_options.as_ref().map(|opts| escape(&opts.to_string())).unwrap_or_default();
-        let icon_escaped = entry.icon_directory.as_ref().map(|s| escape(s)).unwrap_or_default();
-        s.push_str(&format!("{}\t{}\t{}\n", name_escaped, launch_options_escaped, icon_escaped));
+        s.push_str(&format!("{}\t{}\t{}\n",
+            escape(app_name),
+            entry.launch_options.as_ref().map(|opts| escape(&opts.to_string())).unwrap_or_default(),
+            entry.icon_directory.as_ref().map(|s| escape(s)).unwrap_or_default()
+        ));
     }
     s
 }
 
 fn deserialize_cache(s: &str) -> Result<AppCache, Box<dyn std::error::Error>> {
     let mut lines = s.lines();
-    if lines.next().ok_or("Empty cache file")? != "APP_CACHE_V1" {
-        return Err("Unsupported cache file version".into());
-    }
-    let mut cache = AppCache::default();
-    for line in lines.filter(|l| !l.trim().is_empty()) {
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() != 3 {
-            continue;
-        }
-        let app_name = unescape(parts[0]);
-        let launch_options = if parts[1].is_empty() { None } else { Some(parts[1].parse()?) };
-        let icon_directory = if parts[2].is_empty() { None } else { Some(unescape(parts[2])) };
-        cache.apps.push((app_name, AppEntry { launch_options, icon_directory }));
-    }
-    Ok(cache)
+    if lines.next() != Some("APP_CACHE_V1") { return Err("Unsupported cache version".into()); }
+    
+    Ok(AppCache {
+        apps: lines.filter(|l| !l.trim().is_empty())
+            .filter_map(|line| {
+                let parts: Vec<&str> = line.split('\t').collect();
+                if parts.len() == 3 {
+                    Some((
+                        unescape(parts[0]),
+                        AppEntry {
+                            launch_options: if parts[1].is_empty() { None } else { parts[1].parse().ok() },
+                            icon_directory: if parts[2].is_empty() { None } else { Some(unescape(parts[2])) }
+                        }
+                    ))
+                } else { None }
+            }).collect()
+    })
 }
 
 fn save_cache(cache: &AppCache) -> Result<(), Box<dyn std::error::Error>> {
@@ -254,63 +245,27 @@ pub fn get_launch_options() -> HashMap<String, AppLaunchOptions> {
 }
 
 fn update_cache_with_icon(app_name: &str, icon_path: &str) -> Option<String> {
-    if let Ok(mut cache) = APP_CACHE.lock() {
-        if let Some(pos) = cache.apps.iter().position(|(key, _)| key == app_name) {
-            cache.apps[pos].1.icon_directory = Some(icon_path.to_string());
-        } else {
-            let mut entry = AppEntry::default();
-            entry.icon_directory = Some(icon_path.to_string());
-            cache.apps.push((app_name.to_owned(), entry));
-        }
-        let _ = save_cache(&cache);
-    }
+    let mut cache = match APP_CACHE.lock() {
+        Ok(guard) => guard,
+        Err(_) => return None,
+    };
+
+    let entry = if let Some(pos) = cache.apps.iter().position(|(key, _)| key == app_name) {
+        &mut cache.apps[pos].1
+    } else {
+        cache.apps.push((app_name.to_owned(), AppEntry::default()));
+        &mut cache.apps.last_mut().unwrap().1
+    };
+
+    entry.icon_directory = Some(icon_path.to_string());
+    let _ = save_cache(&cache);
     Some(icon_path.to_string())
 }
 
 pub fn resolve_icon_path(app_name: &str, icon_name: &str, config: &crate::gui::Config) -> Option<String> {
-    if icon_name.is_empty() || !config.enable_icons {
-        return None;
-    }
+    if icon_name.is_empty() || !config.enable_icons { return None; }
 
-    if icon_name.starts_with("steam_icon:") {
-        let appid = icon_name.trim_start_matches("steam_icon:");
-        let search_paths = get_icon_search_paths();
-        
-        let steam_patterns = [
-            format!("{}_header.jpg", appid),
-            format!("{}_library_600x900.jpg", appid),
-            format!("{}_library.png", appid),
-            format!("{}_icon.png", appid),
-            format!("{}.png", appid),
-            format!("{}.jpg", appid),
-            format!("{}.ico", appid),
-        ];
-        
-        for path in &search_paths {
-            for pattern in &steam_patterns {
-                let full_path = path.join(pattern);
-                if full_path.exists() {
-                    return update_cache_with_icon(app_name, full_path.to_str().unwrap());
-                }
-            }
-        }
-        
-        return resolve_icon_path(app_name, appid, config);
-    }
-
-    if Path::new(icon_name).is_dir() {
-        if let Ok(entries) = fs::read_dir(icon_name) {
-            for entry in entries.filter_map(Result::ok) {
-                let path = entry.path();
-                if let Some(ext) = path.extension().and_then(|ext| ext.to_str()).map(|s| s.to_owned()) {
-                    if ["png", "jpg", "jpeg", "svg", "ico"].contains(&ext.to_lowercase().as_str()) {
-                        return update_cache_with_icon(app_name, path.to_str().unwrap());
-                    }
-                }
-            }
-        }
-    }
-
+    // Check cache first
     if let Ok(cache) = APP_CACHE.lock() {
         if let Some((_, entry)) = cache.apps.iter().find(|(key, _)| key == app_name) {
             if let Some(ref cached_icon) = entry.icon_directory {
@@ -321,55 +276,68 @@ pub fn resolve_icon_path(app_name: &str, icon_name: &str, config: &crate::gui::C
         }
     }
 
+    // Direct path check
     if Path::new(icon_name).exists() {
         return update_cache_with_icon(app_name, icon_name);
     }
 
-    let search_paths = get_icon_search_paths();
-    let steam_patterns = [
-        format!("{}_header.jpg", icon_name),
-        format!("{}_library_600x900.jpg", icon_name),
-        format!("{}_library.png", icon_name),
-        format!("{}_icon.png", icon_name),
-        format!("{}.png", icon_name),
-        format!("{}.jpg", icon_name),
-        format!("{}.ico", icon_name),
-    ];
-    
-    for path in &search_paths {
-        for pattern in &steam_patterns {
-            let full_path = path.join(pattern);
-            if full_path.exists() {
-                return full_path.to_str().and_then(|p| update_cache_with_icon(app_name, p));
-            }
+    // Steam icon handling
+    if icon_name.starts_with("steam_icon:") {
+        let appid = icon_name.trim_start_matches("steam_icon:");
+        return find_steam_icon(appid, app_name)
+            .or_else(|| resolve_icon_path(app_name, appid, config));
+    }
+
+    // Directory search
+    if Path::new(icon_name).is_dir() {
+        if let Some(icon_file) = find_icon_in_directory(icon_name) {
+            return update_cache_with_icon(app_name, &icon_file);
         }
     }
 
-    let icon_themes = ["hicolor", "Adwaita", "gnome", "breeze", "oxygen"];
-    let icon_sizes = ["512x512", "256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "16x16", "scalable"];
+    // System icon search
+    find_system_icon(icon_name).and_then(|path| update_cache_with_icon(app_name, &path))
+}
+
+fn find_steam_icon(appid: &str, app_name: &str) -> Option<String> {
+    let patterns = [
+        format!("{}_header.jpg", appid), format!("{}_library_600x900.jpg", appid),
+        format!("{}_library.png", appid), format!("{}_icon.png", appid),
+        format!("{}.png", appid), format!("{}.jpg", appid), format!("{}.ico", appid)
+    ];
+    
+    get_icon_search_paths().iter()
+        .flat_map(|path| patterns.iter().map(move |pattern| path.join(pattern)))
+        .find(|path| path.exists())
+        .and_then(|path| path.to_str().map(|s| s.to_owned()))
+        .and_then(|path| update_cache_with_icon(app_name, &path))
+}
+
+fn find_icon_in_directory(dir: &str) -> Option<String> {
+    fs::read_dir(dir).ok()?.filter_map(Result::ok)
+        .find(|entry| {
+            entry.path().extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ["png", "jpg", "jpeg", "svg", "ico"].contains(&ext.to_lowercase().as_str()))
+                .unwrap_or(false)
+        })
+        .and_then(|entry| entry.path().to_str().map(String::from))
+}
+
+fn find_system_icon(icon_name: &str) -> Option<String> {
+    let search_paths = get_icon_search_paths();
+    let themes = ["hicolor", "Adwaita", "gnome", "breeze", "oxygen"];
+    let sizes = ["512x512", "256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "16x16", "scalable"];
     let categories = ["apps", "devices", "places", "mimetypes", "status", "actions"];
     let extensions = ["png", "svg", "xpm", "jpg", "jpeg", "ico"];
     
-    if let Some(path) = search_paths.iter().find_map(|base| {
-        icon_themes.iter().find_map(|theme| {
-            icon_sizes.iter().find_map(|size| {
-                categories.iter().find_map(|cat| {
-                    let dir = base.join(theme).join(size).join(cat);
-                    for ext in &extensions {
-                        let p = dir.join(format!("{}.{}", icon_name, ext));
-                        if p.exists() {
-                            return p.to_str().map(String::from);
-                        }
-                    }
-                    None
-                })
-            })
-        })
-    }) {
-        return update_cache_with_icon(app_name, &path);
-    }
-
-    None
+    search_paths.iter()
+        .flat_map(|base| themes.iter().map(move |theme| base.join(theme)))
+        .flat_map(|theme_path| sizes.iter().map(move |size| theme_path.join(size)))
+        .flat_map(|size_path| categories.iter().map(move |cat| size_path.join(cat)))
+        .flat_map(|cat_path| extensions.iter().map(move |ext| cat_path.join(format!("{}.{}", icon_name, ext))))
+        .find(|path| path.exists())
+        .and_then(|path| path.to_str().map(String::from))
 }
 
 fn get_icon_search_paths() -> Vec<PathBuf> {
@@ -403,149 +371,143 @@ fn get_icon_search_paths() -> Vec<PathBuf> {
 
 fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
     let content = fs::read_to_string(path).ok()?;
-    let (mut name, mut exec, mut icon, mut wm_class) = (None, None, None, None);
+    let mut fields = (None, None, None, None); // name, exec, icon, wm_class
+    
     for line in content.lines() {
-        if let Some((k, v)) = line.split_once('=') {
-            match k.trim() {
-                "Name" if name.is_none() => name = Some(v.trim().to_string()),
-                "Exec" if exec.is_none() => exec = Some(v.trim().to_string()),
-                "Icon" if icon.is_none() => icon = Some(v.trim().to_string()),
-                "StartupWMClass" if wm_class.is_none() => wm_class = Some(v.trim().to_string()),
+        if let Some((key, value)) = line.split_once('=') {
+            match (key.trim(), &mut fields) {
+                ("Name", (name @ None, _, _, _)) => *name = Some(value.trim().to_string()),
+                ("Exec", (_, exec @ None, _, _)) => *exec = Some(value.trim().to_string()),
+                ("Icon", (_, _, icon @ None, _)) => *icon = Some(value.trim().to_string()),
+                ("StartupWMClass", (_, _, _, wm_class @ None)) => *wm_class = Some(value.trim().to_string()),
                 _ => {}
             }
         }
     }
-    let name = name?;
+    
+    let (name, exec, icon, wm_class) = fields;
     let mut exec = exec?;
-    let icon = icon.unwrap_or_default();
-    for ph in ["%f", "%F", "%u", "%U", "%c", "%k", "@@"] {
-        exec = exec.replace(ph, "");
+    
+    // Clean exec command
+    for placeholder in ["%f", "%F", "%u", "%U", "%c", "%k", "@@"] {
+        exec = exec.replace(placeholder, "");
     }
-    exec = exec.replace("%i", &format!("--icon {}", icon)).trim().to_string();
+    if let Some(icon_val) = &icon {
+        exec = exec.replace("%i", &format!("--icon {}", icon_val));
+    }
     if let Some(class) = wm_class {
         if !exec.contains("flatpak run") {
             exec.push_str(&format!(" --class {}", class));
         }
     }
-    Some((name, exec, icon))
+    
+    Some((name?, exec.trim().to_string(), icon.unwrap_or_default()))
 }
 
 fn get_desktop_entries() -> Vec<(String, String, String)> {
-    let mut entries = Vec::new();
-    if let Ok(xdg) = BaseDirectories::new() {
-        let mut app_dirs = Vec::new();
-        for dir in xdg.get_data_dirs() {
-            app_dirs.push(dir.join("applications"));
-        }
-        app_dirs.push(xdg.get_data_home().join("applications"));
-        app_dirs.push(xdg.get_data_home().join("flatpak/exports/share/applications"));
-        for dir in app_dirs {
-            if let Ok(read_dir) = fs::read_dir(&dir) {
-                for entry in read_dir.filter_map(Result::ok) {
-                    if entry.path().extension().map_or(false, |ext| ext == "desktop") {
-                        if let Some(e) = parse_desktop_entry(&entry.path()) {
-                            entries.push(e);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    entries
+    let Ok(xdg) = BaseDirectories::new() else { return Vec::new(); };
+    
+    let mut app_dirs = xdg.get_data_dirs().into_iter().map(|d| d.join("applications")).collect::<Vec<_>>();
+    app_dirs.push(xdg.get_data_home().join("applications"));
+    app_dirs.push(xdg.get_data_home().join("flatpak/exports/share/applications"));
+    
+    app_dirs.into_iter()
+        .filter_map(|dir| fs::read_dir(dir).ok())
+        .flatten()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().map_or(false, |ext| ext == "desktop"))
+        .filter_map(|entry| parse_desktop_entry(&entry.path()))
+        .collect()
 }
 
 fn get_steam_entries() -> Vec<(String, String, String)> {
-    let mut entries = Vec::new();
-    let mut seen_appids = HashSet::new();
     let home = std::env::var("HOME").unwrap_or_default();
     let steam_path = PathBuf::from(&home).join(".local/share/Steam");
-    if !steam_path.exists() {
-        return entries;
-    }
-    let mut library_paths = vec![steam_path.clone()];
+    if !steam_path.exists() { return Vec::new(); }
+    
+    let library_paths = get_steam_library_paths(&steam_path);
+    let mut seen_appids = HashSet::new();
+    
+    library_paths.into_iter()
+        .map(|lib| lib.join("steamapps"))
+        .filter(|path| path.exists())
+        .filter_map(|steamapps| fs::read_dir(steamapps).ok())
+        .flatten()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("appmanifest_"))
+        .filter_map(|entry| parse_steam_manifest(&entry.path(), &mut seen_appids))
+        .collect()
+}
+
+fn get_steam_library_paths(steam_path: &PathBuf) -> Vec<PathBuf> {
+    let mut paths = vec![steam_path.clone()];
     let library_vdf = steam_path.join("steamapps/libraryfolders.vdf");
-    if library_vdf.exists() {
-        if let Ok(content) = fs::read_to_string(&library_vdf) {
-            for line in content.lines() {
-                if line.contains("\"path\"") {
-                    let parts: Vec<&str> = line.split('"').filter(|s| !s.trim().is_empty()).collect();
-                    if parts.len() >= 2 {
-                        let lib_path = PathBuf::from(parts[1]);
-                        if lib_path.exists() && !library_paths.contains(&lib_path) {
-                            library_paths.push(lib_path);
-                        }
+    
+    if let Ok(content) = fs::read_to_string(&library_vdf) {
+        for line in content.lines() {
+            if line.contains("\"path\"") {
+                if let Some(path_str) = line.split('"').nth(3) {
+                    let lib_path = PathBuf::from(path_str);
+                    if lib_path.exists() && !paths.contains(&lib_path) {
+                        paths.push(lib_path);
                     }
                 }
             }
         }
     }
-    for lib in library_paths {
-        let steamapps = lib.join("steamapps");
-        if steamapps.exists() && steamapps.is_dir() {
-            if let Ok(entries_iter) = fs::read_dir(&steamapps) {
-                for entry in entries_iter.filter_map(Result::ok) {
-                    let path = entry.path();
-                    if path.is_file() && path.file_name().unwrap_or_default().to_string_lossy().starts_with("appmanifest_") {
-                        if let Ok(content) = fs::read_to_string(&path) {
-                            let mut appid = None;
-                            let mut name = None;
-                            let mut installdir = None;
-                            for line in content.lines() {
-                                let trimmed = line.trim();
-                                if trimmed.starts_with("\"appid\"") {
-                                    let parts: Vec<&str> = trimmed.split('"').collect();
-                                    if parts.len() >= 4 {
-                                        appid = Some(parts[3].to_string());
-                                    }
-                                }
-                                if trimmed.starts_with("\"name\"") {
-                                    let parts: Vec<&str> = trimmed.split('"').collect();
-                                    if parts.len() >= 4 {
-                                        name = Some(parts[3].to_string());
-                                    }
-                                }
-                                if trimmed.starts_with("\"installdir\"") {
-                                    let parts: Vec<&str> = trimmed.split('"').collect();
-                                    if parts.len() >= 4 {
-                                        installdir = Some(parts[3].to_string());
-                                    }
-                                }
-                            }
-                            if let (Some(appid_val), Some(name_val), Some(installdir_val)) = (appid, name, installdir) {
-                                if seen_appids.contains(&appid_val) {
-                                    continue;
-                                }
-                                seen_appids.insert(appid_val.clone());
-                                let exec_cmd = format!("steam steam://rungameid/{}", appid_val);
-                                let icon_dir = steamapps.join("common").join(&installdir_val);
-                                let mut icon_path = String::new();
-                                if icon_dir.exists() {
-                                    icon_path = icon_dir.to_string_lossy().to_string();
-                                    if let Ok(mut entries) = fs::read_dir(&icon_dir) {
-                                        let has_icon = entries.any(|e| {
-                                            e.ok().and_then(|entry| {
-                                                entry.path().extension().and_then(|ext| ext.to_str().map(|s| s.to_owned()))
-                                            }).map_or(false, |ext| {
-                                                ["png", "jpg", "jpeg", "svg", "ico"].contains(&ext.to_lowercase().as_str())
-                                            })
-                                        });
-                                        if !has_icon {
-                                            icon_path.clear();
-                                        }
-                                    }
-                                }
-                                if icon_path.is_empty() {
-                                    icon_path = format!("steam_icon:{}", appid_val);
-                                }
-                                entries.push((name_val, exec_cmd, icon_path));
-                            }
-                        }
-                    }
-                }
-            }
+    paths
+}
+
+fn parse_steam_manifest(path: &PathBuf, seen_appids: &mut HashSet<String>) -> Option<(String, String, String)> {
+    let content = fs::read_to_string(path).ok()?;
+    let mut fields = (None, None, None); // appid, name, installdir
+    
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(value) = extract_quoted_value(trimmed, "appid") {
+            fields.0 = Some(value);
+        } else if let Some(value) = extract_quoted_value(trimmed, "name") {
+            fields.1 = Some(value);
+        } else if let Some(value) = extract_quoted_value(trimmed, "installdir") {
+            fields.2 = Some(value);
         }
     }
-    entries
+    
+    let (appid, name, installdir) = fields;
+    let (appid, name, installdir) = (appid?, name?, installdir?);
+    
+    if !seen_appids.insert(appid.clone()) { return None; }
+    
+    let icon_path = determine_steam_icon_path(path, &appid, &installdir);
+    Some((name, format!("steam steam://rungameid/{}", appid), icon_path))
+}
+
+fn extract_quoted_value(line: &str, key: &str) -> Option<String> {
+    if line.starts_with(&format!("\"{}\"", key)) {
+        line.split('"').nth(3).map(String::from)
+    } else { None }
+}
+
+fn determine_steam_icon_path(manifest_path: &PathBuf, appid: &str, installdir: &str) -> String {
+    let steamapps = manifest_path.parent().unwrap();
+    let icon_dir = steamapps.join("common").join(installdir);
+    
+    if icon_dir.exists() && has_icon_files(&icon_dir) {
+        icon_dir.to_string_lossy().to_string()
+    } else {
+        format!("steam_icon:{}", appid)
+    }
+}
+
+fn has_icon_files(dir: &PathBuf) -> bool {
+    fs::read_dir(dir).ok()
+        .map(|entries| entries.filter_map(Result::ok).any(|entry| {
+            entry.path().extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ["png", "jpg", "jpeg", "svg", "ico"].contains(&ext.to_lowercase().as_str()))
+                .unwrap_or(false)
+        }))
+        .unwrap_or(false)
 }
 
 fn search_applications(query: &str, apps: &[(String, String, String)], max_results: usize) -> Vec<(String, String, String)> {
