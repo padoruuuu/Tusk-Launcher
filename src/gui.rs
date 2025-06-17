@@ -9,6 +9,7 @@ use chrono::{DateTime, Local};
 use eframe;
 use serde::{Deserialize, Serialize};
 use xdg;
+use crate::app_cache::resolve_icon_path;
 
 const DEFAULT_THEME: &str = r#"
 .main-window {background-color: rgba(0,0,0,0.9); width:200px; height:200px; background-image: ""; background-size: stretch; background-opacity: 1.0;}
@@ -165,9 +166,29 @@ impl Theme {
                 if let Some(end_brace) = after_brace.find('}') {
                     let block = &after_brace[..end_brace];
                     let props = block.split(';')
+                        .filter(|s| !s.trim().is_empty())
                         .filter_map(|decl| {
                             let decl = decl.trim();
-                            decl.split_once(':').map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+                            decl.split_once(':')
+                                .map(|(k, v)| {
+                                    let key = k.trim().to_lowercase();
+                                    let mut value = v.trim().to_string();
+                                    
+                                    // Remove surrounding quotes
+                                    if value.starts_with('"') && value.ends_with('"') {
+                                        value = value[1..value.len()-1].to_string();
+                                    } else if value.starts_with('\'') && value.ends_with('\'') {
+                                        value = value[1..value.len()-1].to_string();
+                                    }
+                                    
+                                    // Handle url() syntax
+                                    if value.starts_with("url(") && value.ends_with(')') {
+                                        let inner = &value[4..value.len()-1].trim();
+                                        value = inner.trim_matches(|c| c == '"' || c == '\'').to_string();
+                                    }
+                                    
+                                    (key, value)
+                                })
                         })
                         .collect();
                     rules.push(Rule { class_name, props });
@@ -179,35 +200,83 @@ impl Theme {
     }
 
     fn get_style(&self, class: &str, prop: &str) -> Option<String> {
+        let prop = prop.to_lowercase();
         self.rules.iter()
+            .rev()
             .find(|r| r.class_name.trim().eq_ignore_ascii_case(class.trim()))
-            .and_then(|r| r.props.get(prop).cloned())
+            .and_then(|r| r.props.get(&prop).cloned())
     }
 
     fn get_combined_style(&self, classes: &[&str], prop: &str) -> Option<String> {
-        classes.iter().find_map(|&c| self.get_style(c, prop))
+        let prop = prop.to_lowercase();
+        classes.iter().find_map(|&c| self.get_style(c, &prop))
     }
 
     fn parse_color(&self, s: &str) -> Option<eframe::egui::Color32> {
         let s = s.trim().to_lowercase();
         if s == "transparent" { return Some(eframe::egui::Color32::TRANSPARENT); }
-        if s.starts_with("rgba(") {
-            let inner = s.strip_prefix("rgba(")?.strip_suffix(")")?.trim();
-            let vals: Vec<&str> = inner.split(',').map(|v| v.trim()).collect();
-            if vals.len() == 4 {
-                let r = vals[0].parse().ok()?;
-                let g = vals[1].parse().ok()?;
-                let b = vals[2].parse().ok()?;
-                let a = vals[3].parse::<f32>().ok()?;
-                return Some(eframe::egui::Color32::from_rgba_unmultiplied(r, g, b, (a * 255.0) as u8));
-            }
-        } else if s.starts_with('#') && s.len() == 7 {
-            let hex = &s[1..];
-            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-            return Some(eframe::egui::Color32::from_rgb(r, g, b));
+        
+        // Handle rgba() format
+        if s.starts_with("rgba(") || s.starts_with("rgb(") {
+            let is_rgba = s.starts_with("rgba(");
+            let prefix = if is_rgba { "rgba(" } else { "rgb(" };
+            let inner = s.strip_prefix(prefix)?.strip_suffix(')')?.trim();
+            let parts: Vec<&str> = inner.split(',').map(|p| p.trim()).collect();
+            
+            let (r, g, b, a) = match (is_rgba, parts.len()) {
+                (true, 4) | (false, 3) => {
+                    let r = parts[0].parse().ok()?;
+                    let g = parts[1].parse().ok()?;
+                    let b = parts[2].parse().ok()?;
+                    let a = if is_rgba {
+                        parts[3].parse::<f32>().ok()?
+                    } else {
+                        1.0
+                    };
+                    (r, g, b, a)
+                }
+                _ => return None,
+            };
+            
+            return Some(eframe::egui::Color32::from_rgba_unmultiplied(
+                r, g, b, (a * 255.0) as u8
+            ));
         }
+        
+        // Handle hex formats
+        if s.starts_with('#') {
+            let hex = s.trim_start_matches('#');
+            match hex.len() {
+                3 => { // #RGB
+                    let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()?;
+                    let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?;
+                    let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?;
+                    return Some(eframe::egui::Color32::from_rgb(r, g, b));
+                }
+                4 => { // #RGBA
+                    let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()?;
+                    let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?;
+                    let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?;
+                    let a = u8::from_str_radix(&hex[3..4].repeat(2), 16).ok()?;
+                    return Some(eframe::egui::Color32::from_rgba_unmultiplied(r, g, b, a));
+                }
+                6 => { // #RRGGBB
+                    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+                    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+                    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+                    return Some(eframe::egui::Color32::from_rgb(r, g, b));
+                }
+                8 => { // #RRGGBBAA
+                    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+                    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+                    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+                    let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
+                    return Some(eframe::egui::Color32::from_rgba_unmultiplied(r, g, b, a));
+                }
+                _ => return None,
+            };
+        }
+        
         None
     }
 
@@ -221,7 +290,7 @@ impl Theme {
 
     pub fn get_config(&self) -> Config {
         let mut config = Config::default();
-        if let Some(rule) = self.rules.iter().find(|r| r.class_name.trim().eq_ignore_ascii_case("config")) {
+        if let Some(rule) = self.rules.iter().rev().find(|r| r.class_name.trim().eq_ignore_ascii_case("config")) {
             macro_rules! update_field {
                 ($key:expr, $field:ident, $typ:ty) => {
                     if let Some(val) = rule.props.get($key) {
@@ -641,35 +710,48 @@ impl eframe::App for EframeWrapper {
                 let rect = ui.max_rect();
                 if let Some(bg_image_path) = self.theme.get_style("main-window", "background-image") {
                     if !bg_image_path.is_empty() {
-                        if let Some(texture) = self.icon_manager.get_texture(ctx, &bg_image_path) {
-                            let bg_size = self.theme.get_style("main-window", "background-size").unwrap_or("stretch".to_string());
-                            let image_size = texture.size_vec2();
-                            let (draw_rect, uv_rect) = match bg_size.as_str() {
-                                "fit" => {
-                                    let scale = (rect.width()/image_size.x).min(rect.height()/image_size.y);
-                                    let new_size = image_size * scale;
-                                    let offset = (rect.size() - new_size) * 0.5;
-                                    (eframe::egui::Rect::from_min_size(rect.min + offset, new_size),
-                                     eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0)))
-                                },
-                                "fill" => {
-                                    let scale = (rect.width()/image_size.x).max(rect.height()/image_size.y);
-                                    let new_size = image_size * scale;
-                                    let offset = (new_size - rect.size()) * 0.5;
-                                    let uv_min = eframe::egui::Pos2::new(offset.x / new_size.x, offset.y / new_size.y);
-                                    let uv_max = eframe::egui::Pos2::new(1.0 - offset.x / new_size.x, 1.0 - offset.y / new_size.y);
-                                    (rect, eframe::egui::Rect::from_min_max(uv_min, uv_max))
-                                },
-                                "stretch" => (rect, eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0))),
-                                _ => (rect, eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0))) // fallback
-                            };
-                            let opacity: f32 = self.theme.get_style("main-window", "background-opacity")
-                                .and_then(|s| s.parse::<f32>().ok()).unwrap_or(1.0);
-                            let tint = eframe::egui::Color32::from_white_alpha((opacity * 255.0) as u8);
-                            ui.painter().image(texture.id(), draw_rect, uv_rect, tint);
-                        } else { ui.painter().rect_filled(rect, 0.0, bg); }
-                    } else { ui.painter().rect_filled(rect, 0.0, bg); }
-                } else { ui.painter().rect_filled(rect, 0.0, bg); }
+                        // Resolve path using existing cache infrastructure
+                        let resolved_path = resolve_icon_path("main-window", &bg_image_path, &self.config);
+                        if let Some(path) = resolved_path {
+                            if let Some(texture) = self.icon_manager.get_texture(ctx, &path) {
+                                let bg_size = self.theme.get_style("main-window", "background-size").unwrap_or("stretch".to_string());
+                                let image_size = texture.size_vec2();
+                                let (draw_rect, uv_rect) = match bg_size.as_str() {
+                                    "fit" => {
+                                        let scale = (rect.width()/image_size.x).min(rect.height()/image_size.y);
+                                        let new_size = image_size * scale;
+                                        let offset = (rect.size() - new_size) * 0.5;
+                                        (eframe::egui::Rect::from_min_size(rect.min + offset, new_size),
+                                         eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0)))
+                                    },
+                                    "fill" => {
+                                        let scale = (rect.width()/image_size.x).max(rect.height()/image_size.y);
+                                        let new_size = image_size * scale;
+                                        let offset = (new_size - rect.size()) * 0.5;
+                                        let uv_min = eframe::egui::Pos2::new(offset.x / new_size.x, offset.y / new_size.y);
+                                        let uv_max = eframe::egui::Pos2::new(1.0 - offset.x / new_size.x, 1.0 - offset.y / new_size.y);
+                                        (rect, eframe::egui::Rect::from_min_max(uv_min, uv_max))
+                                    },
+                                    "stretch" => (rect, eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0))),
+                                    _ => (rect, eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0))) // fallback
+                                };
+                                let opacity: f32 = self.theme.get_style("main-window", "background-opacity")
+                                    .and_then(|s| s.parse::<f32>().ok()).unwrap_or(1.0);
+                                let tint = eframe::egui::Color32::from_white_alpha((opacity * 255.0) as u8);
+                                ui.painter().image(texture.id(), draw_rect, uv_rect, tint);
+                            } else {
+                                ui.painter().rect_filled(rect, 0.0, bg);
+                                eprintln!("Failed to load background image: {}", path);
+                            }
+                        } else {
+                            ui.painter().rect_filled(rect, 0.0, bg);
+                        }
+                    } else { 
+                        ui.painter().rect_filled(rect, 0.0, bg); 
+                    }
+                } else { 
+                    ui.painter().rect_filled(rect, 0.0, bg); 
+                }
                 
                 let mut secs = vec!["search-bar", "app-list"];
                 if self.config.enable_audio_control { secs.push("volume-slider"); }
