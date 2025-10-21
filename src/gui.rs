@@ -424,7 +424,7 @@ fn set_widget_bg(style: &mut eframe::egui::Style, base: eframe::egui::Color32, h
 fn custom_button(ui: &mut eframe::egui::Ui, label: &str, class: &str, theme: &Theme) -> eframe::egui::Response {
     let text_style = eframe::egui::TextStyle::Button;
     let font_id = ui.style().text_styles.get(&text_style).cloned().unwrap_or_default();
-    let galley = ui.fonts(|fonts| fonts.layout_no_wrap(label.to_owned(), font_id.clone(), eframe::egui::Color32::WHITE));
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font_id.clone(), eframe::egui::Color32::WHITE);
     let desired_size = galley.size() + ui.spacing().button_padding * 2.0;
     let (rect, _) = ui.allocate_exact_size(desired_size, eframe::egui::Sense::hover());
     let button_id = ui.id().with(label);
@@ -777,8 +777,14 @@ impl eframe::App for EframeWrapper {
             });
         
         if let Some((ref mut app_name, ref mut opts)) = self.editing {
-            let x = self.theme.get_px_value("env-input", "x").unwrap_or((ctx.input(|i| i.screen_rect().width()) - 300.0) / 2.0);
-            let y = self.theme.get_px_value("env-input", "y").unwrap_or((ctx.input(|i| i.screen_rect().height()) - 200.0) / 2.0);
+            let viewport_rect = ctx.input(|i| {
+                i.viewport().inner_rect.unwrap_or(eframe::egui::Rect::from_min_max(
+                    eframe::egui::pos2(0.0, 0.0),
+                    eframe::egui::pos2(800.0, 600.0)
+                ))
+            });
+            let x = self.theme.get_px_value("env-input", "x").unwrap_or((viewport_rect.width() - 300.0) / 2.0);
+            let y = self.theme.get_px_value("env-input", "y").unwrap_or((viewport_rect.height() - 200.0) / 2.0);
             let env_bg = self.theme.get_style("env-input", "background-color")
                 .and_then(|s| self.theme.parse_color(&s))
                 .unwrap_or(eframe::egui::Color32::TRANSPARENT);
