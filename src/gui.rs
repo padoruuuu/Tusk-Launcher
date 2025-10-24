@@ -5,7 +5,7 @@ use std::{
     io::Write,
     path::PathBuf,
 };
-use chrono::{DateTime, Local};
+use time::OffsetDateTime;
 use eframe;
 use serde::{Deserialize, Serialize};
 use xdg;
@@ -93,13 +93,42 @@ impl Default for Config {
     }
 }
 
-pub fn format_datetime(datetime: &DateTime<Local>, config: &Config) -> String {
-    let date = match config.time_order {
-        TimeOrder::MdyHms => datetime.format("%m/%d/%Y"),
-        TimeOrder::YmdHms => datetime.format("%Y/%m/%d"),
-        TimeOrder::DmyHms => datetime.format("%d/%m/%Y"),
+pub fn format_datetime(datetime: &OffsetDateTime, config: &Config) -> String {
+    use time::macros::format_description;
+    
+    let date_str = match config.time_order {
+        TimeOrder::MdyHms => {
+            let format = format_description!("[month]/[day]/[year]");
+            datetime.format(&format).unwrap_or_default()
+        },
+        TimeOrder::YmdHms => {
+            let format = format_description!("[year]/[month]/[day]");
+            datetime.format(&format).unwrap_or_default()
+        },
+        TimeOrder::DmyHms => {
+            let format = format_description!("[day]/[month]/[year]");
+            datetime.format(&format).unwrap_or_default()
+        },
     };
-    format!("{} {}", datetime.format(&config.time_format), date)
+    
+    // Convert chrono-style format strings to time format
+    let time_str = format_time_with_chrono_format(datetime, &config.time_format);
+    
+    format!("{} {}", time_str, date_str)
+}
+
+// Helper function to handle chrono-style format strings
+fn format_time_with_chrono_format(dt: &OffsetDateTime, format_str: &str) -> String {
+    // Handle common chrono format patterns
+    let result = format_str
+        .replace("%I", &format!("{:02}", dt.hour() % 12))
+        .replace("%H", &format!("{:02}", dt.hour()))
+        .replace("%M", &format!("{:02}", dt.minute()))
+        .replace("%S", &format!("{:02}", dt.second()))
+        .replace("%p", if dt.hour() < 12 { "AM" } else { "PM" })
+        .replace("%P", if dt.hour() < 12 { "am" } else { "pm" });
+    
+    result
 }
 
 #[derive(Serialize, Deserialize, Clone)]

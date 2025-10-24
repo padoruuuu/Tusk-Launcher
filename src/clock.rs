@@ -1,8 +1,8 @@
-use chrono::Local;
+use time::OffsetDateTime;
 use crate::gui::{Config, format_datetime};
 
 pub fn get_current_time(config: &Config) -> String {
-    format_datetime(&Local::now(), config)
+    format_datetime(&OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc()), config)
 }
 
 #[cfg(test)]
