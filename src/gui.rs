@@ -70,11 +70,10 @@ pub enum TimeOrder { MdyHms, YmdHms, DmyHms, }
 impl Default for Config {
     fn default() -> Self {
         let icon_cache_dir = xdg::BaseDirectories::new()
-            .map(|bd| bd.get_config_home().join("tusk-launcher/icons"))
-            .unwrap_or_else(|e| {
-                eprintln!("Failed to get XDG config home: {}", e);
-                PathBuf::from(".").join("tusk-launcher/icons")
-            });
+            .get_config_home()
+            .expect("Failed to get XDG config home")
+            .join("tusk-launcher/icons");
+        
         Self {
             enable_recent_apps: true,
             max_search_results: 5,
@@ -121,34 +120,19 @@ impl Theme {
     }
 
     fn try_load() -> Result<Theme, Box<dyn Error>> {
-        let dirs = xdg::BaseDirectories::new().map_err(|e| {
-            eprintln!("Failed to get XDG base directories: {}", e);
-            e
-        })?;
-        let path = dirs.place_config_file("tusk-launcher/theme.css").map_err(|e| {
-            eprintln!("Failed to get theme.css path: {}", e);
-            e
-        })?;
+        let dirs = xdg::BaseDirectories::new();
+        let path = dirs.place_config_file("tusk-launcher/theme.css")?;
+        
         if let Some(parent) = path.parent() {
-            create_dir_all(parent).map_err(|e| {
-                eprintln!("Failed to create config directory: {}", e);
-                e
-            })?;
+            create_dir_all(parent)?;
         }
+        
         if !path.exists() {
-            let mut file = OpenOptions::new().write(true).create(true).open(&path).map_err(|e| {
-                eprintln!("Failed to create theme.css: {}", e);
-                e
-            })?;
-            file.write_all(DEFAULT_THEME.as_bytes()).map_err(|e| {
-                eprintln!("Failed to write default theme: {}", e);
-                e
-            })?;
+            let mut file = OpenOptions::new().write(true).create(true).open(&path)?;
+            file.write_all(DEFAULT_THEME.as_bytes())?;
         }
-        let content = read_to_string(&path).map_err(|e| {
-            eprintln!("Failed to read theme.css: {}", e);
-            e
-        })?;
+        
+        let content = read_to_string(&path)?;
         let cleaned = remove_comments(content.trim());
         Ok(Self { rules: Self::parse_css_rules(cleaned.trim()) })
     }
@@ -733,7 +717,7 @@ impl eframe::App for EframeWrapper {
                                         (rect, eframe::egui::Rect::from_min_max(uv_min, uv_max))
                                     },
                                     "stretch" => (rect, eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0))),
-                                    _ => (rect, eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0))) // fallback
+                                    _ => (rect, eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0)))
                                 };
                                 let opacity: f32 = self.theme.get_style("main-window", "background-opacity")
                                     .and_then(|s| s.parse::<f32>().ok()).unwrap_or(1.0);
