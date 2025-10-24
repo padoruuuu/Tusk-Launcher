@@ -126,10 +126,10 @@ impl IconManager {
 }
 
 static CACHE_FILE: Lazy<PathBuf> = Lazy::new(|| {
-    let xdg = BaseDirectories::new()
-        .map(|bd| bd.get_config_home().to_owned())
-        .unwrap_or_else(|_| PathBuf::from("."));
-    let mut path = xdg.join("tusk-launcher");
+    let xdg = BaseDirectories::new();
+    let config_home = xdg.get_config_home()
+        .unwrap_or_else(|| PathBuf::from("."));
+    let mut path = config_home.join("tusk-launcher");
     fs::create_dir_all(&path).expect("Failed to create config directory");
     path.push("app_cache.txt");
     path
@@ -342,14 +342,18 @@ fn find_system_icon(icon_name: &str) -> Option<String> {
 
 fn get_icon_search_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    if let Ok(xdg) = BaseDirectories::new() {
-        paths.push(xdg.get_data_home().join("icons"));
-        paths.push(xdg.get_data_home().join("flatpak/exports/share/icons"));
-        for data_dir in xdg.get_data_dirs() {
-            paths.push(data_dir.join("icons"));
-            paths.push(data_dir.join("pixmaps"));
-        }
+    let xdg = BaseDirectories::new();
+    
+    if let Some(data_home) = xdg.get_data_home() {
+        paths.push(data_home.join("icons"));
+        paths.push(data_home.join("flatpak/exports/share/icons"));
     }
+    
+    for data_dir in xdg.get_data_dirs() {
+        paths.push(data_dir.join("icons"));
+        paths.push(data_dir.join("pixmaps"));
+    }
+    
     paths.push(PathBuf::from("/usr/share/pixmaps"));
     paths.push(PathBuf::from("/var/lib/flatpak/exports/share/icons"));
     
@@ -405,11 +409,14 @@ fn parse_desktop_entry(path: &PathBuf) -> Option<(String, String, String)> {
 }
 
 fn get_desktop_entries() -> Vec<(String, String, String)> {
-    let Ok(xdg) = BaseDirectories::new() else { return Vec::new(); };
+    let xdg = BaseDirectories::new();
     
     let mut app_dirs = xdg.get_data_dirs().into_iter().map(|d| d.join("applications")).collect::<Vec<_>>();
-    app_dirs.push(xdg.get_data_home().join("applications"));
-    app_dirs.push(xdg.get_data_home().join("flatpak/exports/share/applications"));
+    
+    if let Some(data_home) = xdg.get_data_home() {
+        app_dirs.push(data_home.join("applications"));
+        app_dirs.push(data_home.join("flatpak/exports/share/applications"));
+    }
     
     app_dirs.into_iter()
         .filter_map(|dir| fs::read_dir(dir).ok())
