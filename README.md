@@ -8,7 +8,9 @@ what it looks like with default theme.css:
 
 ![image](https://github.com/user-attachments/assets/1c9462c7-0d7f-4194-97b9-b8a1ed05a641)
 
+More minimalist theme:
 
+<img width="356" height="214" alt="image" src="https://github.com/user-attachments/assets/56664f57-933a-4a41-a90c-0ef9c4aed90f" />
 
 
 #INSTALLATION
