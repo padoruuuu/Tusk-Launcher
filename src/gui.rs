@@ -542,7 +542,6 @@ impl EframeGui {
                 icon_manager: crate::app_cache::IconManager::new(),
                 theme,
                 config: cfg,
-                env_window_result: None,
             }))
         }))?;
         Ok(())
@@ -558,12 +557,6 @@ struct EframeWrapper {
     icon_manager: crate::app_cache::IconManager,
     theme: Theme,
     config: Config,
-    env_window_result: Option<EnvWindowResult>,
-}
-
-enum EnvWindowResult {
-    Save(String, String),
-    Cancel,
 }
 
 impl EframeWrapper {
@@ -759,16 +752,27 @@ impl eframe::App for EframeWrapper {
             .and_then(|s| self.theme.parse_color(&s))
             .unwrap_or(eframe::egui::Color32::BLACK);
         
-        eframe::egui::Area::new("main-window".into())
+        let main_w = self.theme.get_px_value("main-window", "width").unwrap_or(300.0);
+        let main_h = self.theme.get_px_value("main-window", "height").unwrap_or(200.0);
+        let bg = self.theme.get_style("main-window", "background-color")
+            .and_then(|s| self.theme.parse_color(&s))
+            .unwrap_or(eframe::egui::Color32::BLACK);
+        
+        // Use a fixed-size Area for the main window to ensure consistent positioning
+        eframe::egui::Area::new("main-window-container".into())
             .fixed_pos(eframe::egui::pos2(0.0, 0.0))
             .show(ctx, |ui| {
-                self.theme.apply_style(ui, "main-window");
                 ui.set_min_size(eframe::egui::vec2(main_w, main_h));
                 ui.set_max_size(eframe::egui::vec2(main_w, main_h));
-                let rect = ui.max_rect();
+                
+                let rect = eframe::egui::Rect::from_min_size(
+                    eframe::egui::pos2(0.0, 0.0),
+                    eframe::egui::vec2(main_w, main_h)
+                );
+                
+                // Draw background
                 if let Some(bg_image_path) = self.theme.get_style("main-window", "background-image") {
                     if !bg_image_path.is_empty() {
-                        // Resolve path using existing cache infrastructure
                         let resolved_path = resolve_icon_path("main-window", &bg_image_path, &self.config);
                         if let Some(path) = resolved_path {
                             if let Some(texture) = self.icon_manager.get_texture(ctx, &path) {
@@ -811,43 +815,40 @@ impl eframe::App for EframeWrapper {
                     ui.painter().rect_filled(rect, 0.0, bg); 
                 }
                 
+                // Render sections as Areas within the main window container
                 let mut secs = vec!["search-bar", "app-list"];
                 if self.config.enable_audio_control { secs.push("volume-slider"); }
                 if self.config.show_time { secs.push("time-display"); }
                 if self.config.enable_power_options { secs.push("power-button"); }
                 secs.sort_by_key(|s| self.theme.get_order(s));
                 for sec in secs {
-                    if let (Some(x), Some(y)) = (self.theme.get_px_value(sec, "x"), self.theme.get_px_value(sec, "y")) {
-                        let area = eframe::egui::Area::new(sec.to_owned().into())
+                    let area = if let (Some(x), Some(y)) = (self.theme.get_px_value(sec, "x"), self.theme.get_px_value(sec, "y")) {
+                        eframe::egui::Area::new(sec.to_owned().into())
                             .order(eframe::egui::Order::Foreground)
-                            .fixed_pos(eframe::egui::pos2(x, y));
-                        area.show(ctx, |ui| {
-                            if sec == "search-bar" || sec == "env-input" {
-                                if let (Some(w), Some(h)) = (self.theme.get_px_value(sec, "width"), self.theme.get_px_value(sec, "height")) {
-                                    ui.set_min_size(eframe::egui::vec2(w, h));
-                                    ui.set_max_size(eframe::egui::vec2(w, h));
-                                }
+                            .fixed_pos(eframe::egui::pos2(x, y))
+                    } else {
+                        eframe::egui::Area::new(sec.to_owned().into())
+                            .order(eframe::egui::Order::Foreground)
+                    };
+                    
+                    area.show(ctx, |ui| {
+                        if sec == "search-bar" || sec == "env-input" {
+                            if let (Some(w), Some(h)) = (self.theme.get_px_value(sec, "width"), self.theme.get_px_value(sec, "height")) {
+                                ui.set_min_size(eframe::egui::vec2(w, h));
+                                ui.set_max_size(eframe::egui::vec2(w, h));
                             }
-                            self.render_section(ui, sec, ctx);
-                        });
-                    } else { self.render_section(ui, sec, ctx); }
+                        } else if sec == "app-list" {
+                            if let (Some(w), Some(h)) = (self.theme.get_px_value(sec, "width"), self.theme.get_px_value(sec, "height")) {
+                                ui.set_min_size(eframe::egui::vec2(w, h));
+                                ui.set_max_size(eframe::egui::vec2(w, h));
+                            }
+                        }
+                        self.render_section(ui, sec, ctx);
+                    });
                 }
             });
         
-        // Handle env window result from previous frame
-        if let Some(result) = self.env_window_result.take() {
-            match result {
-                EnvWindowResult::Save(app_name, opts) => {
-                    self.app.handle_input(&format!("LAUNCH_OPTIONS:{}:{}", app_name, opts));
-                    self.editing = None;
-                }
-                EnvWindowResult::Cancel => {
-                    self.editing = None;
-                }
-            }
-        }
-        
-        if let Some((ref app_name, ref opts)) = self.editing.clone() {
+        if let Some((ref app_name, ref opts)) = self.editing {
             let env_bg = self.theme.get_style("env-input", "background-color")
                 .and_then(|s| self.theme.parse_color(&s))
                 .unwrap_or(eframe::egui::Color32::from_rgba_unmultiplied(59, 66, 82, 255));
@@ -855,28 +856,47 @@ impl eframe::App for EframeWrapper {
             let env_width = self.theme.get_px_value("env-input", "width").unwrap_or(300.0);
             let env_height = self.theme.get_px_value("env-input", "height").unwrap_or(150.0);
             
-            // Clone values for the viewport
             let app_name_clone = app_name.clone();
-            let mut opts_clone = opts.clone();
+            let opts_clone = opts.clone();
             let theme_clone = self.theme.clone();
             
             // Create a new viewport (separate window)
             let viewport_id = eframe::egui::ViewportId::from_hash_of("env_variables_window");
             let viewport_builder = eframe::egui::ViewportBuilder::default()
-                .with_title(format!("Environment Variables - {}", app_name_clone))
+                .with_title(format!("Environment Variables - {}", app_name))
                 .with_inner_size([env_width, env_height])
                 .with_resizable(false)
                 .with_always_on_top();
             
-            // Store result to process next frame
-            let result_ref = &mut self.env_window_result;
+            // Get or initialize the editable text from global memory
+            let memory_key = format!("env_opts_{}", app_name);
+            let mut current_opts = ctx.data_mut(|d| {
+                d.get_persisted::<String>(eframe::egui::Id::new(&memory_key))
+                    .unwrap_or_else(|| opts_clone.clone())
+            });
+            
+            // Check if we just opened the window - initialize memory
+            if current_opts.is_empty() && !opts_clone.is_empty() {
+                ctx.data_mut(|d| {
+                    d.insert_persisted(eframe::egui::Id::new(&memory_key), opts_clone.clone());
+                });
+                current_opts = opts_clone.clone();
+            }
+            
+            // Use a shared flag in memory for save/cancel actions
+            let action_key = format!("env_action_{}", app_name);
             
             ctx.show_viewport_immediate(
                 viewport_id,
                 viewport_builder,
-                |ctx, _class| {
-                    let mut should_save = false;
-                    let mut should_cancel = false;
+                move |ctx, _class| {
+                    let memory_key = format!("env_opts_{}", app_name_clone);
+                    let action_key = format!("env_action_{}", app_name_clone);
+                    
+                    let mut local_opts = ctx.data_mut(|d| {
+                        d.get_persisted::<String>(eframe::egui::Id::new(&memory_key))
+                            .unwrap_or_else(|| opts_clone.clone())
+                    });
                     
                     eframe::egui::CentralPanel::default()
                         .frame(eframe::egui::Frame::NONE.fill(env_bg))
@@ -886,35 +906,75 @@ impl eframe::App for EframeWrapper {
                                 ui.add_space(4.0);
                                 with_alignment(ui, &theme_clone, "env-input", |ui| {
                                     theme_clone.apply_style(ui, "env-input");
-                                    ui.add(eframe::egui::TextEdit::singleline(&mut opts_clone).hint_text("Enter env variables...").frame(false));
+                                    ui.add(eframe::egui::TextEdit::singleline(&mut local_opts).hint_text("Enter env variables..."));
                                 });
                                 ui.add_space(4.0);
                                 ui.horizontal(|ui| {
                                     if custom_button(ui, "Save", "edit-button", &theme_clone).clicked() { 
-                                        should_save = true;
+                                        ctx.data_mut(|d| {
+                                            d.insert_temp(eframe::egui::Id::new(&action_key), "save".to_string());
+                                        });
                                     }
                                     if custom_button(ui, "Cancel", "edit-button", &theme_clone).clicked() { 
-                                        should_cancel = true;
+                                        ctx.data_mut(|d| {
+                                            d.insert_temp(eframe::egui::Id::new(&action_key), "cancel".to_string());
+                                        });
                                     }
                                 });
                             });
+                            
+                            // Check for Escape key in the env window
+                            if ctx.input(|i| i.key_pressed(eframe::egui::Key::Escape)) {
+                                ctx.data_mut(|d| {
+                                    d.insert_temp(eframe::egui::Id::new(&action_key), "cancel".to_string());
+                                });
+                            }
                         });
                     
-                    if should_save {
-                        *result_ref = Some(EnvWindowResult::Save(app_name_clone.clone(), opts_clone.clone()));
-                        ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
-                    } else if should_cancel {
-                        *result_ref = Some(EnvWindowResult::Cancel);
-                        ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
-                    }
+                    // Save the edited text back to memory
+                    ctx.data_mut(|d| {
+                        d.insert_persisted(eframe::egui::Id::new(&memory_key), local_opts.clone());
+                    });
                 },
             );
+            
+            // Check for actions
+            let action = ctx.data_mut(|d| {
+                d.get_temp::<String>(eframe::egui::Id::new(&action_key))
+            });
+            
+            if let Some(action) = action {
+                if action == "save" {
+                    let final_opts = ctx.data_mut(|d| {
+                        d.get_persisted::<String>(eframe::egui::Id::new(&memory_key))
+                            .unwrap_or_else(|| opts.clone())
+                    });
+                    self.app.handle_input(&format!("LAUNCH_OPTIONS:{}:{}", app_name, final_opts));
+                    self.editing = None;
+                    ctx.data_mut(|d| {
+                        d.remove::<String>(eframe::egui::Id::new(&memory_key));
+                        d.remove::<String>(eframe::egui::Id::new(&action_key));
+                    });
+                    ctx.send_viewport_cmd_to(viewport_id, eframe::egui::ViewportCommand::Close);
+                } else if action == "cancel" {
+                    self.editing = None;
+                    ctx.data_mut(|d| {
+                        d.remove::<String>(eframe::egui::Id::new(&memory_key));
+                        d.remove::<String>(eframe::egui::Id::new(&action_key));
+                    });
+                    ctx.send_viewport_cmd_to(viewport_id, eframe::egui::ViewportCommand::Close);
+                }
+            }
         }
         
         let esc = ctx.input(|i| i.key_pressed(eframe::egui::Key::Escape));
         let enter = ctx.input(|i| i.key_pressed(eframe::egui::Key::Enter));
-        if esc && self.editing.is_some() { self.editing = None; }
-        else if esc { self.app.handle_input("ESC"); }
+        
+        // Only handle escape in main window if env window is NOT open
+        if esc && self.editing.is_none() { 
+            self.app.handle_input("ESC"); 
+        }
+        
         if enter && self.editing.is_none() { self.app.handle_input("ENTER"); }
         
         if self.app.should_quit() {
