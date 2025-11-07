@@ -23,7 +23,7 @@ const DEFAULT_THEME: &str = r#"
 .power-button {x:20px; y:190px; width:65px; height:15px; background-color: rgba(122,162,247,1); hover-background-color: rgba(102,138,196,1); text-color: rgba(236,239,244,1); hover-text-color: rgba(236,239,244,1); border-radius: 0px; padding: 0px;}
 .edit-button {background-color: rgba(122,162,247,1); hover-background-color: rgba(102,138,196,1); text-color: rgba(236,239,244,1); hover-text-color: rgba(236,239,244,1); border-radius: 0px; padding: 0px; font-size: 12px;}
 .env-input {background-color: rgba(59,66,82,1); text-color: rgba(236,239,244,1); hover-text-color: rgba(236,239,244,1); padding: 0px; font-size: 12px; border-radius: 0px; width:150px; height:50px;}
-.config {enable_recent_apps:true; max_search_results:5; enable_power_options:true; show_time:true; time_format:"%I:%M %p"; time_order:MdyHms; enable_audio_control:false; max_volume:1.5; volume_update_interval_ms:500; power_commands:systemctl poweroff,loginctl poweroff,poweroff,halt; restart_commands:systemctl reboot,loginctl reboot,reboot; logout_commands:loginctl terminate-session $XDG_SESSION_ID,hyprctl dispatch exit,swaymsg exit,gnome-session-quit --logout --no-prompt,qdbus org.kde.ksmserver /KSMServer logout 0 0 0; enable_icons:true;}
+.config {enable_recent_apps:true; max_search_results:5; enable_power_options:true; show_time:true; time_format:"%I:%M %p"; time_order:MdyHms; enable_audio_control:false; max_volume:1.5; volume_update_interval_ms:500; power_commands:systemctl poweroff,loginctl poweroff,poweroff,halt; restart_commands:systemctl reboot,loginctl reboot,reboot; logout_commands:loginctl terminate-session $XDG_SESSION_ID,hyprctl dispatch exit,swaymsg exit,gnome-session-quit --logout --no-prompt,qdbus org.kde.ksmserver /KSMServer logout 0 0 0; enable_icons:true; show_settings_button:true;}
 "#;
 
 fn remove_comments(css: &str) -> String {
@@ -62,6 +62,7 @@ pub struct Config {
     pub logout_commands: Vec<String>,
     pub enable_icons: bool,
     pub icon_cache_dir: PathBuf,
+    pub show_settings_button: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -89,6 +90,7 @@ impl Default for Config {
             logout_commands: vec!["loginctl terminate-session $XDG_SESSION_ID".into(), "hyprctl dispatch exit".into(), "swaymsg exit".into(), "gnome-session-quit --logout --no-prompt".into(), "qdbus org.kde.ksmserver /KSMServer logout 0 0 0".into()],
             enable_icons: true,
             icon_cache_dir,
+            show_settings_button: true,
         }
     }
 }
@@ -336,6 +338,7 @@ impl Theme {
                 let trimmed = val.trim().trim_matches('"');
                 if !trimmed.is_empty() { config.icon_cache_dir = PathBuf::from(trimmed); }
             }
+            update_field!("show_settings_button", show_settings_button, bool);
         }
         config
     }
@@ -619,23 +622,25 @@ impl EframeWrapper {
                     for (_, elem) in elems {
                         match elem {
                             "settings" => {
-                                let btn_w = self.theme.get_px_value("settings-button", "width").unwrap_or(22.0);
-                                let btn_h = self.theme.get_px_value("settings-button", "height").unwrap_or(22.0);
-                                let x_off = self.theme.get_px_value("settings-button", "x-offset").unwrap_or(0.0);
-                                let y_off = self.theme.get_px_value("settings-button", "y-offset").unwrap_or(0.0);
-                                let (base_rect, _) = ui.allocate_exact_size(eframe::egui::vec2(btn_w, btn_h), eframe::egui::Sense::hover());
-                                let new_rect = base_rect.translate(eframe::egui::vec2(x_off, y_off));
-                                let settings_id = row_id.with("settings-button");
-                                let resp = ui.interact(new_rect, settings_id, eframe::egui::Sense::click());
-                                self.theme.apply_style(ui, "settings-button");
-                                let gear = "⚙";
-                                let center_align = eframe::egui::Align2([eframe::egui::Align::Center, eframe::egui::Align::Center]);
-                                let gear_font = eframe::egui::TextStyle::Button.resolve(ui.style());
-                                let gear_color = self.theme.get_text_color("settings-button", resp.hovered()).unwrap_or(eframe::egui::Color32::from_rgb(64, 64, 64));
-                                ui.painter().text(new_rect.center(), center_align, gear, gear_font, gear_color);
-                                if resp.clicked() && self.editing.is_none() {
-                                    let prepop = self.app.get_formatted_launch_options(&app_name);
-                                    self.editing = Some((app_name.clone(), prepop));
+                                if self.config.show_settings_button {
+                                    let btn_w = self.theme.get_px_value("settings-button", "width").unwrap_or(22.0);
+                                    let btn_h = self.theme.get_px_value("settings-button", "height").unwrap_or(22.0);
+                                    let x_off = self.theme.get_px_value("settings-button", "x-offset").unwrap_or(0.0);
+                                    let y_off = self.theme.get_px_value("settings-button", "y-offset").unwrap_or(0.0);
+                                    let (base_rect, _) = ui.allocate_exact_size(eframe::egui::vec2(btn_w, btn_h), eframe::egui::Sense::hover());
+                                    let new_rect = base_rect.translate(eframe::egui::vec2(x_off, y_off));
+                                    let settings_id = row_id.with("settings-button");
+                                    let resp = ui.interact(new_rect, settings_id, eframe::egui::Sense::click());
+                                    self.theme.apply_style(ui, "settings-button");
+                                    let gear = "⚙";
+                                    let center_align = eframe::egui::Align2([eframe::egui::Align::Center, eframe::egui::Align::Center]);
+                                    let gear_font = eframe::egui::TextStyle::Button.resolve(ui.style());
+                                    let gear_color = self.theme.get_text_color("settings-button", resp.hovered()).unwrap_or(eframe::egui::Color32::from_rgb(64, 64, 64));
+                                    ui.painter().text(new_rect.center(), center_align, gear, gear_font, gear_color);
+                                    if resp.clicked() && self.editing.is_none() {
+                                        let prepop = self.app.get_formatted_launch_options(&app_name);
+                                        self.editing = Some((app_name.clone(), prepop));
+                                    }
                                 }
                             },
                             "icon" => {
@@ -652,8 +657,35 @@ impl EframeWrapper {
                             },
                             "app" => {
                                 with_custom_style(ui, |s| { self.theme.apply_combined_widget_style(s, &["app-button"]); }, |ui| {
-                                    if custom_button(ui, &app_name, "app-button", &self.theme).clicked() {
+                                    let text_style = eframe::egui::TextStyle::Button;
+                                    let font_id = ui.style().text_styles.get(&text_style).cloned().unwrap_or_default();
+                                    let galley = ui.painter().layout_no_wrap(app_name.clone(), font_id.clone(), eframe::egui::Color32::WHITE);
+                                    let desired_size = galley.size() + ui.spacing().button_padding * 2.0;
+                                    let (rect, _) = ui.allocate_exact_size(desired_size, eframe::egui::Sense::hover());
+                                    let button_id = ui.id().with(&app_name);
+                                    let response = ui.interact(rect, button_id, eframe::egui::Sense::click().union(eframe::egui::Sense::click_and_drag()));
+                                    
+                                    if ui.is_rect_visible(rect) {
+                                        let (base_bg, hover_bg, rounding) = self.theme.get_frame_properties("app-button", ui.style().visuals.widgets.inactive.bg_fill);
+                                        let normal_tc = self.theme.get_style("app-button", "text-color").and_then(|s| self.theme.parse_color(&s)).unwrap_or(eframe::egui::Color32::WHITE);
+                                        let hover_tc = self.theme.get_style("app-button", "hover-text-color").and_then(|s| self.theme.parse_color(&s)).unwrap_or(normal_tc);
+                                        let bg = if response.hovered() { hover_bg.unwrap_or(base_bg) } else { base_bg };
+                                        ui.painter().rect_filled(rect, rounding, bg);
+                                        let text_color = if response.hovered() { hover_tc } else { normal_tc };
+                                        let center_align = eframe::egui::Align2([eframe::egui::Align::Center, eframe::egui::Align::Center]);
+                                        ui.painter().galley(rect.center() - galley.size() * 0.5, galley, text_color);
+                                        ui.painter().text(rect.center(), center_align, &app_name, font_id, text_color);
+                                    }
+                                    
+                                    // Handle left click
+                                    if response.clicked() {
                                         self.app.launch_app(&app_name);
+                                    }
+                                    
+                                    // Handle right click
+                                    if response.secondary_clicked() && self.editing.is_none() {
+                                        let prepop = self.app.get_formatted_launch_options(&app_name);
+                                        self.editing = Some((app_name.clone(), prepop));
                                     }
                                 });
                             },
