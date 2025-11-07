@@ -138,6 +138,12 @@ struct Rule { class_name: String, props: HashMap<String, String>, }
 
 pub struct Theme { rules: Vec<Rule> }
 
+impl Clone for Theme {
+    fn clone(&self) -> Self {
+        Theme { rules: self.rules.clone() }
+    }
+}
+
 impl Theme {
     pub fn load_or_create() -> Theme {
         match Self::try_load() {
@@ -536,6 +542,7 @@ impl EframeGui {
                 icon_manager: crate::app_cache::IconManager::new(),
                 theme,
                 config: cfg,
+                env_window_result: None,
             }))
         }))?;
         Ok(())
@@ -551,6 +558,12 @@ struct EframeWrapper {
     icon_manager: crate::app_cache::IconManager,
     theme: Theme,
     config: Config,
+    env_window_result: Option<EnvWindowResult>,
+}
+
+enum EnvWindowResult {
+    Save(String, String),
+    Cancel,
 }
 
 impl EframeWrapper {
@@ -821,46 +834,81 @@ impl eframe::App for EframeWrapper {
                 }
             });
         
-        if let Some((ref mut app_name, ref mut opts)) = self.editing {
-            let viewport_rect = ctx.input(|i| {
-                i.viewport().inner_rect.unwrap_or(eframe::egui::Rect::from_min_max(
-                    eframe::egui::pos2(0.0, 0.0),
-                    eframe::egui::pos2(800.0, 600.0)
-                ))
-            });
-            let x = self.theme.get_px_value("env-input", "x").unwrap_or((viewport_rect.width() - 300.0) / 2.0);
-            let y = self.theme.get_px_value("env-input", "y").unwrap_or((viewport_rect.height() - 200.0) / 2.0);
+        // Handle env window result from previous frame
+        if let Some(result) = self.env_window_result.take() {
+            match result {
+                EnvWindowResult::Save(app_name, opts) => {
+                    self.app.handle_input(&format!("LAUNCH_OPTIONS:{}:{}", app_name, opts));
+                    self.editing = None;
+                }
+                EnvWindowResult::Cancel => {
+                    self.editing = None;
+                }
+            }
+        }
+        
+        if let Some((ref app_name, ref opts)) = self.editing.clone() {
             let env_bg = self.theme.get_style("env-input", "background-color")
                 .and_then(|s| self.theme.parse_color(&s))
-                .unwrap_or(eframe::egui::Color32::TRANSPARENT);
-            let mut save = false; let mut cancel = false;
-            let area = eframe::egui::Area::new("env-input".to_string().into())
-                .order(eframe::egui::Order::Foreground)
-                .movable(true)
-                .default_pos(eframe::egui::pos2(x, y));
-            area.show(ctx, |ui| {
-                if let (Some(w), Some(h)) = (self.theme.get_px_value("env-input", "width"), self.theme.get_px_value("env-input", "height")) {
-                    ui.set_min_size(eframe::egui::vec2(w, h));
-                    ui.set_max_size(eframe::egui::vec2(w, h));
-                }
-                eframe::egui::Frame::NONE.fill(env_bg).show(ui, |ui| {
-                    ui.vertical(|ui| {
-                        ui.label(format!("Environment Variables for {}", app_name));
-                        ui.add_space(4.0);
-                        with_alignment(ui, &self.theme, "env-input", |ui| {
-                            self.theme.apply_style(ui, "env-input");
-                            ui.add(eframe::egui::TextEdit::singleline(opts).hint_text("Enter env variables...").frame(false));
+                .unwrap_or(eframe::egui::Color32::from_rgba_unmultiplied(59, 66, 82, 255));
+            
+            let env_width = self.theme.get_px_value("env-input", "width").unwrap_or(300.0);
+            let env_height = self.theme.get_px_value("env-input", "height").unwrap_or(150.0);
+            
+            // Clone values for the viewport
+            let app_name_clone = app_name.clone();
+            let mut opts_clone = opts.clone();
+            let theme_clone = self.theme.clone();
+            
+            // Create a new viewport (separate window)
+            let viewport_id = eframe::egui::ViewportId::from_hash_of("env_variables_window");
+            let viewport_builder = eframe::egui::ViewportBuilder::default()
+                .with_title(format!("Environment Variables - {}", app_name_clone))
+                .with_inner_size([env_width, env_height])
+                .with_resizable(false)
+                .with_always_on_top();
+            
+            // Store result to process next frame
+            let result_ref = &mut self.env_window_result;
+            
+            ctx.show_viewport_immediate(
+                viewport_id,
+                viewport_builder,
+                |ctx, _class| {
+                    let mut should_save = false;
+                    let mut should_cancel = false;
+                    
+                    eframe::egui::CentralPanel::default()
+                        .frame(eframe::egui::Frame::NONE.fill(env_bg))
+                        .show(ctx, |ui| {
+                            ui.vertical(|ui| {
+                                ui.label(format!("Environment Variables for {}", app_name_clone));
+                                ui.add_space(4.0);
+                                with_alignment(ui, &theme_clone, "env-input", |ui| {
+                                    theme_clone.apply_style(ui, "env-input");
+                                    ui.add(eframe::egui::TextEdit::singleline(&mut opts_clone).hint_text("Enter env variables...").frame(false));
+                                });
+                                ui.add_space(4.0);
+                                ui.horizontal(|ui| {
+                                    if custom_button(ui, "Save", "edit-button", &theme_clone).clicked() { 
+                                        should_save = true;
+                                    }
+                                    if custom_button(ui, "Cancel", "edit-button", &theme_clone).clicked() { 
+                                        should_cancel = true;
+                                    }
+                                });
+                            });
                         });
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            if custom_button(ui, "Save", "edit-button", &self.theme).clicked() { save = true; }
-                            if custom_button(ui, "Cancel", "edit-button", &self.theme).clicked() { cancel = true; }
-                        });
-                    });
-                });
-            });
-            if save { self.app.handle_input(&format!("LAUNCH_OPTIONS:{}:{}", app_name, opts)); self.editing = None; }
-            else if cancel { self.editing = None; }
+                    
+                    if should_save {
+                        *result_ref = Some(EnvWindowResult::Save(app_name_clone.clone(), opts_clone.clone()));
+                        ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
+                    } else if should_cancel {
+                        *result_ref = Some(EnvWindowResult::Cancel);
+                        ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
+                    }
+                },
+            );
         }
         
         let esc = ctx.input(|i| i.key_pressed(eframe::egui::Key::Escape));
