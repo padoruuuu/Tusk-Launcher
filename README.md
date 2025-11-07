@@ -10,7 +10,8 @@ what it looks like with default theme.css:
 
 More minimalist theme:
 
-<img width="356" height="214" alt="image" src="https://github.com/user-attachments/assets/56664f57-933a-4a41-a90c-0ef9c4aed90f" />
+<img width="700" height="400" alt="image" src="https://github.com/user-attachments/assets/35572956-a948-42a3-ae99-a2d2e0d43d2c" />
+
 
 
 #INSTALLATION
