@@ -478,15 +478,6 @@ fn with_alignment<R>(ui: &mut eframe::egui::Ui, theme: &Theme, sec: &str, f: imp
         let layout = match pos.as_str() {
             "center" => eframe::egui::Layout::centered_and_justified(eframe::egui::Direction::LeftToRight),
             "left" => eframe::egui::Layout::left_to_right(eframe::egui::Align::Min),
-            "right" => eframe::egui::Layout::right_to_left(eframe::egui::Align::Max),
-            _ => eframe::egui::Layout::default(),
-        };
-        ui.with_layout(layout, f).inner
-    } else if let Some(align) = theme.get_style(sec, "align") {
-        let layout = match align.as_str() {
-            "center" => eframe::egui::Layout::left_to_right(eframe::egui::Align::Center),
-            "right" => eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
-            "left" => eframe::egui::Layout::left_to_right(eframe::egui::Align::Min),
             _ => eframe::egui::Layout::default(),
         };
         ui.with_layout(layout, f).inner
@@ -752,12 +743,6 @@ impl eframe::App for EframeWrapper {
             .and_then(|s| self.theme.parse_color(&s))
             .unwrap_or(eframe::egui::Color32::BLACK);
         
-        let main_w = self.theme.get_px_value("main-window", "width").unwrap_or(300.0);
-        let main_h = self.theme.get_px_value("main-window", "height").unwrap_or(200.0);
-        let bg = self.theme.get_style("main-window", "background-color")
-            .and_then(|s| self.theme.parse_color(&s))
-            .unwrap_or(eframe::egui::Color32::BLACK);
-        
         // Use a fixed-size Area for the main window to ensure consistent positioning
         eframe::egui::Area::new("main-window-container".into())
             .fixed_pos(eframe::egui::pos2(0.0, 0.0))
@@ -848,6 +833,9 @@ impl eframe::App for EframeWrapper {
                 }
             });
         
+        // Check for Escape key globally - will close env window if open
+        let esc_pressed = ctx.input(|i| i.key_pressed(eframe::egui::Key::Escape));
+        
         if let Some((ref app_name, ref opts)) = self.editing {
             let env_bg = self.theme.get_style("env-input", "background-color")
                 .and_then(|s| self.theme.parse_color(&s))
@@ -876,15 +864,31 @@ impl eframe::App for EframeWrapper {
             });
             
             // Check if we just opened the window - initialize memory
-            if current_opts.is_empty() && !opts_clone.is_empty() {
-                ctx.data_mut(|d| {
-                    d.insert_persisted(eframe::egui::Id::new(&memory_key), opts_clone.clone());
+            if current_opts != opts_clone {
+                // Only reinitialize if the stored value is from a different app
+                let stored_app_key = format!("env_app_name");
+                let stored_app = ctx.data_mut(|d| {
+                    d.get_persisted::<String>(eframe::egui::Id::new(&stored_app_key))
                 });
-                current_opts = opts_clone.clone();
+                
+                if stored_app.as_ref() != Some(&app_name_clone) {
+                    ctx.data_mut(|d| {
+                        d.insert_persisted(eframe::egui::Id::new(&memory_key), opts_clone.clone());
+                        d.insert_persisted(eframe::egui::Id::new(&stored_app_key), app_name_clone.clone());
+                    });
+                    current_opts = opts_clone.clone();
+                }
             }
             
             // Use a shared flag in memory for save/cancel actions
             let action_key = format!("env_action_{}", app_name);
+            
+            // If Escape was pressed, set the cancel action
+            if esc_pressed {
+                ctx.data_mut(|d| {
+                    d.insert_temp(eframe::egui::Id::new(&action_key), "cancel".to_string());
+                });
+            }
             
             ctx.show_viewport_immediate(
                 viewport_id,
@@ -906,7 +910,11 @@ impl eframe::App for EframeWrapper {
                                 ui.add_space(4.0);
                                 with_alignment(ui, &theme_clone, "env-input", |ui| {
                                     theme_clone.apply_style(ui, "env-input");
-                                    ui.add(eframe::egui::TextEdit::singleline(&mut local_opts).hint_text("Enter env variables..."));
+                                    // Use multiline text edit to allow deletion
+                                    let text_edit = eframe::egui::TextEdit::singleline(&mut local_opts)
+                                        .hint_text("Enter env variables...")
+                                        .desired_width(f32::INFINITY);
+                                    ui.add(text_edit);
                                 });
                                 ui.add_space(4.0);
                                 ui.horizontal(|ui| {
@@ -954,6 +962,7 @@ impl eframe::App for EframeWrapper {
                     ctx.data_mut(|d| {
                         d.remove::<String>(eframe::egui::Id::new(&memory_key));
                         d.remove::<String>(eframe::egui::Id::new(&action_key));
+                        d.remove::<String>(eframe::egui::Id::new("env_app_name"));
                     });
                     ctx.send_viewport_cmd_to(viewport_id, eframe::egui::ViewportCommand::Close);
                 } else if action == "cancel" {
@@ -961,19 +970,19 @@ impl eframe::App for EframeWrapper {
                     ctx.data_mut(|d| {
                         d.remove::<String>(eframe::egui::Id::new(&memory_key));
                         d.remove::<String>(eframe::egui::Id::new(&action_key));
+                        d.remove::<String>(eframe::egui::Id::new("env_app_name"));
                     });
                     ctx.send_viewport_cmd_to(viewport_id, eframe::egui::ViewportCommand::Close);
                 }
             }
+        } else {
+            // Only handle escape in main window if env window is NOT open
+            if esc_pressed { 
+                self.app.handle_input("ESC"); 
+            }
         }
         
-        let esc = ctx.input(|i| i.key_pressed(eframe::egui::Key::Escape));
         let enter = ctx.input(|i| i.key_pressed(eframe::egui::Key::Enter));
-        
-        // Only handle escape in main window if env window is NOT open
-        if esc && self.editing.is_none() { 
-            self.app.handle_input("ESC"); 
-        }
         
         if enter && self.editing.is_none() { self.app.handle_input("ENTER"); }
         
