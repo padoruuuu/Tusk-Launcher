@@ -9,7 +9,7 @@ use time::OffsetDateTime;
 use eframe;
 use serde::{Deserialize, Serialize};
 use xdg;
-use crate::app_cache::resolve_icon_path;
+use crate::app_launcher::resolve_icon_path;
 
 const DEFAULT_THEME: &str = r#"
 .main-window {background-color: rgba(0,0,0,0.9); width:200px; height:200px; background-image: ""; background-size: stretch; background-opacity: 1.0;}
@@ -530,7 +530,7 @@ impl EframeGui {
                 current_volume: 0.0,
                 editing: None,
                 focused: false,
-                icon_manager: crate::app_cache::IconManager::new(),
+                icon_manager: crate::app_launcher::IconManager::new(),
                 theme,
                 config: cfg,
             }))
@@ -545,7 +545,7 @@ struct EframeWrapper {
     current_volume: f32,
     editing: Option<(String, String)>,
     focused: bool,
-    icon_manager: crate::app_cache::IconManager,
+    icon_manager: crate::app_launcher::IconManager,
     theme: Theme,
     config: Config,
 }

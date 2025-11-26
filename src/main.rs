@@ -1,8 +1,9 @@
 mod clock;
 mod power;
-mod app_cache;
+mod app_launcher;
 mod gui;
 mod audio;
+
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
@@ -53,7 +54,7 @@ fn main() {
     println!("Current time: {}", get_current_time(&theme.get_config()));
     
     // Run the GUI on the main thread
-    let app = Box::new(app_cache::AppLauncher::default());
+    let app = Box::new(app_launcher::AppLauncher::default());
     if let Err(e) = EframeGui::run(app) {
         eprintln!("Error running GUI: {}", e);
         process::exit(1);
