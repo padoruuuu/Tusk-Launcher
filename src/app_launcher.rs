@@ -62,7 +62,8 @@ impl FromStr for AppLaunchOptions {
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct AppEntry {
     pub launch_options: Option<AppLaunchOptions>,
-    pub icon_directory: Option<String>,
+    pub icon_path: Option<String>,
+    pub exec_command: Option<String>,
     pub terminal_command: Option<String>,
 }
 
@@ -132,12 +133,13 @@ fn unescape(s: &str) -> String {
 }
 
 fn serialize_cache(cache: &AppCache) -> String {
-    let mut s = String::from("APP_CACHE_V2\n");
+    let mut s = String::from("APP_CACHE_V3\n");
     for (app_name, entry) in &cache.apps {
-        s.push_str(&format!("{}\t{}\t{}\t{}\n",
+        s.push_str(&format!("{}\t{}\t{}\t{}\t{}\n",
             escape(app_name),
             entry.launch_options.as_ref().map(|o| escape(&o.to_string())).unwrap_or_default(),
-            entry.icon_directory.as_ref().map(|s| escape(s)).unwrap_or_default(),
+            entry.icon_path.as_ref().map(|s| escape(s)).unwrap_or_default(),
+            entry.exec_command.as_ref().map(|s| escape(s)).unwrap_or_default(),
             entry.terminal_command.as_ref().map(|s| escape(s)).unwrap_or_default()
         ));
     }
@@ -148,9 +150,11 @@ fn deserialize_cache(s: &str) -> Result<AppCache, Box<dyn std::error::Error>> {
     let mut lines = s.lines();
     let version = lines.next();
     
-    // Support both V1 and V2 formats
+    let is_v3 = version == Some("APP_CACHE_V3");
     let is_v2 = version == Some("APP_CACHE_V2");
-    if version != Some("APP_CACHE_V1") && !is_v2 {
+    let is_v1 = version == Some("APP_CACHE_V1");
+    
+    if !is_v1 && !is_v2 && !is_v3 {
         return Err("Unsupported cache version".into()); 
     }
     
@@ -159,22 +163,34 @@ fn deserialize_cache(s: &str) -> Result<AppCache, Box<dyn std::error::Error>> {
             .filter(|l| !l.trim().is_empty())
             .filter_map(|line| {
                 let parts: Vec<&str> = line.split('\t').collect();
-                if is_v2 && parts.len() == 4 {
+                
+                if is_v3 && parts.len() == 5 {
                     Some((
                         unescape(parts[0]),
                         AppEntry {
                             launch_options: (!parts[1].is_empty()).then(|| parts[1].parse().ok()).flatten(),
-                            icon_directory: (!parts[2].is_empty()).then(|| unescape(parts[2])),
+                            icon_path: (!parts[2].is_empty()).then(|| unescape(parts[2])),
+                            exec_command: (!parts[3].is_empty()).then(|| unescape(parts[3])),
+                            terminal_command: (!parts[4].is_empty()).then(|| unescape(parts[4])),
+                        }
+                    ))
+                } else if is_v2 && parts.len() == 4 {
+                    Some((
+                        unescape(parts[0]),
+                        AppEntry {
+                            launch_options: (!parts[1].is_empty()).then(|| parts[1].parse().ok()).flatten(),
+                            icon_path: (!parts[2].is_empty()).then(|| unescape(parts[2])),
+                            exec_command: None,
                             terminal_command: (!parts[3].is_empty()).then(|| unescape(parts[3])),
                         }
                     ))
-                } else if !is_v2 && parts.len() == 3 {
-                    // Legacy V1 format support
+                } else if is_v1 && parts.len() == 3 {
                     Some((
                         unescape(parts[0]),
                         AppEntry {
                             launch_options: (!parts[1].is_empty()).then(|| parts[1].parse().ok()).flatten(),
-                            icon_directory: (!parts[2].is_empty()).then(|| unescape(parts[2])),
+                            icon_path: (!parts[2].is_empty()).then(|| unescape(parts[2])),
+                            exec_command: None,
                             terminal_command: None,
                         }
                     ))
@@ -191,30 +207,33 @@ fn save_cache(cache: &AppCache) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn get_or_create_entry<'a>(cache: &'a mut AppCache, app_name: &str) -> &'a mut AppEntry {
+    let pos = cache.apps.iter().position(|(name, _)| name == app_name);
+    match pos {
+        Some(idx) => &mut cache.apps[idx].1,
+        None => {
+            cache.apps.insert(0, (app_name.to_owned(), AppEntry::default()));
+            &mut cache.apps[0].1
+        }
+    }
+}
+
 pub fn update_recent_apps(app_name: &str, enable_recent_apps: bool) -> Result<(), Box<dyn std::error::Error>> {
     if !enable_recent_apps { return Ok(()); }
     
     let mut cache = APP_CACHE.lock().map_err(|e| format!("Lock error: {:?}", e))?;
-    let entry = cache.apps.iter()
-        .position(|(name, _)| name == app_name)
-        .map(|pos| cache.apps.remove(pos).1)
-        .unwrap_or_default();
-    
-    cache.apps.insert(0, (app_name.to_owned(), entry));
-    save_cache(&cache)
+    if let Some(pos) = cache.apps.iter().position(|(name, _)| name == app_name) {
+        let entry = cache.apps.remove(pos);
+        cache.apps.insert(0, entry);
+        save_cache(&cache)
+    } else {
+        Ok(())
+    }
 }
 
 pub fn update_launch_options(app_name: &str, options: AppLaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
     let mut cache = APP_CACHE.lock().map_err(|e| format!("Lock error: {:?}", e))?;
-    
-    match cache.apps.iter().position(|(name, _)| name == app_name) {
-        Some(pos) => cache.apps[pos].1.launch_options = Some(options),
-        None => cache.apps.push((app_name.to_owned(), AppEntry {
-            launch_options: Some(options),
-            icon_directory: None,
-            terminal_command: None,
-        })),
-    }
+    get_or_create_entry(&mut cache, app_name).launch_options = Some(options);
     save_cache(&cache)
 }
 
@@ -230,20 +249,40 @@ pub fn get_launch_options() -> HashMap<String, AppLaunchOptions> {
         .unwrap_or_default()
 }
 
-fn update_cache_with_icon(app_name: &str, icon_path: &str) -> Option<String> {
-    let mut cache = APP_CACHE.lock().ok()?;
-
-    let entry = match cache.apps.iter().position(|(key, _)| key == app_name) {
-        Some(pos) => &mut cache.apps[pos].1,
-        None => {
-            cache.apps.push((app_name.to_owned(), AppEntry::default()));
-            &mut cache.apps.last_mut().unwrap().1
+fn cache_app_metadata(app_name: &str, exec_cmd: &str, icon_path: &str) {
+    if let Ok(mut cache) = APP_CACHE.lock() {
+        let entry = get_or_create_entry(&mut cache, app_name);
+        
+        if entry.exec_command.is_none() {
+            entry.exec_command = Some(exec_cmd.to_string());
         }
-    };
+        
+        if entry.icon_path.is_none() && !icon_path.is_empty() {
+            entry.icon_path = Some(icon_path.to_string());
+        }
+        
+        if entry.terminal_command.is_none() {
+            if let Some(term_cmd) = extract_terminal_command(exec_cmd) {
+                entry.terminal_command = Some(term_cmd);
+            }
+        }
+        
+        let _ = save_cache(&cache);
+    }
+}
 
-    entry.icon_directory = Some(icon_path.to_string());
-    save_cache(&cache).ok()?;
-    Some(icon_path.to_string())
+fn get_cached_data(app_name: &str) -> Option<(Option<String>, Option<String>, Option<String>)> {
+    APP_CACHE.lock()
+        .ok()
+        .and_then(|cache| {
+            cache.apps.iter()
+                .find(|(name, _)| name == app_name)
+                .map(|(_, entry)| (
+                    entry.icon_path.clone(),
+                    entry.exec_command.clone(),
+                    entry.terminal_command.clone()
+                ))
+        })
 }
 
 // ============================================================================
@@ -309,39 +348,37 @@ pub fn resolve_icon_path(app_name: &str, icon_name: &str, config: &crate::gui::C
     if icon_name.is_empty() || !config.enable_icons { return None; }
 
     // Check cache first
-    if let Ok(cache) = APP_CACHE.lock() {
-        if let Some((_, entry)) = cache.apps.iter().find(|(key, _)| key == app_name) {
-            if let Some(ref cached_icon) = entry.icon_directory {
-                if Path::new(cached_icon).exists() {
-                    return Some(cached_icon.clone());
-                }
+    if let Some((cached_icon, _, _)) = get_cached_data(app_name) {
+        if let Some(ref icon) = cached_icon {
+            if Path::new(icon).exists() {
+                return Some(icon.clone());
             }
         }
     }
 
     // Direct path check
     if Path::new(icon_name).exists() {
-        return update_cache_with_icon(app_name, icon_name);
+        return Some(icon_name.to_string());
     }
 
     // Steam icon handling
     if let Some(appid) = icon_name.strip_prefix("steam_icon:") {
-        return find_steam_icon(appid, app_name)
+        return find_steam_icon(appid)
             .or_else(|| resolve_icon_path(app_name, appid, config));
     }
 
     // Directory search
     if Path::new(icon_name).is_dir() {
         if let Some(icon_file) = find_icon_in_directory(icon_name) {
-            return update_cache_with_icon(app_name, &icon_file);
+            return Some(icon_file);
         }
     }
 
     // System icon search
-    find_system_icon(icon_name).and_then(|path| update_cache_with_icon(app_name, &path))
+    find_system_icon(icon_name)
 }
 
-fn find_steam_icon(appid: &str, app_name: &str) -> Option<String> {
+fn find_steam_icon(appid: &str) -> Option<String> {
     let patterns = [
         format!("{}_header.jpg", appid), 
         format!("{}_library_600x900.jpg", appid),
@@ -356,7 +393,6 @@ fn find_steam_icon(appid: &str, app_name: &str) -> Option<String> {
         .flat_map(|path| patterns.iter().map(move |pattern| path.join(pattern)))
         .find(|path| path.exists())
         .and_then(|path| path.to_str().map(String::from))
-        .and_then(|path| update_cache_with_icon(app_name, &path))
 }
 
 fn find_icon_in_directory(dir: &str) -> Option<String> {
@@ -483,10 +519,12 @@ fn get_desktop_entries() -> Vec<AppEntryTuple> {
 // ============================================================================
 
 fn get_steam_entries() -> Vec<AppEntryTuple> {
+    // Fixed: Use if let pattern matching instead of ? operator
     let home = match std::env::var("HOME") {
-        Ok(h) => h,
+        Ok(home) => home,
         Err(_) => return Vec::new(),
     };
+    
     let steam_path = PathBuf::from(&home).join(".local/share/Steam");
     if !steam_path.exists() { return Vec::new(); }
     
@@ -587,56 +625,19 @@ fn has_icon_files(dir: &PathBuf) -> bool {
 }
 
 // ============================================================================
-// Application Search and Launch
+// Application Launch
 // ============================================================================
 
 fn extract_terminal_command(exec_cmd: &str) -> Option<String> {
-    // Extract the base command from the exec path
-    let cmd = exec_cmd.trim();
-    
-    // Remove common prefixes and arguments
-    let cleaned = cmd
+    let cleaned = exec_cmd
         .split_whitespace()
         .next()?
-        .trim_start_matches("env ")
-        .trim();
+        .trim_start_matches("env ");
     
-    // Get the executable name from path
-    if let Some(base_name) = cleaned.split('/').last() {
-        // Clean up the base name
-        let terminal_cmd = base_name.trim();
-        if !terminal_cmd.is_empty() && !terminal_cmd.starts_with('-') {
-            return Some(terminal_cmd.to_string());
-        }
-    }
-    
-    None
-}
-
-fn update_terminal_command_cache(app_name: &str, exec_cmd: &str) {
-    if let Some(terminal_cmd) = extract_terminal_command(exec_cmd) {
-        if let Ok(mut cache) = APP_CACHE.lock() {
-            if let Some(pos) = cache.apps.iter().position(|(name, _)| name == app_name) {
-                cache.apps[pos].1.terminal_command = Some(terminal_cmd);
-            } else {
-                cache.apps.push((app_name.to_owned(), AppEntry {
-                    launch_options: None,
-                    icon_directory: None,
-                    terminal_command: Some(terminal_cmd),
-                }));
-            }
-            let _ = save_cache(&cache);
-        }
-    }
-}
-
-fn get_cached_terminal_command(app_name: &str) -> Option<String> {
-    APP_CACHE.lock()
-        .ok()?
-        .apps
-        .iter()
-        .find(|(name, _)| name == app_name)
-        .and_then(|(_, entry)| entry.terminal_command.clone())
+    cleaned.split('/').last()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty() && !s.starts_with('-'))
+        .map(String::from)
 }
 
 fn search_applications(query: &str, apps: &[AppEntryTuple], max_results: usize) -> Vec<AppEntryTuple> {
@@ -651,9 +652,13 @@ fn search_applications(query: &str, apps: &[AppEntryTuple], max_results: usize) 
 fn launch_app(
     app_name: &str,
     exec_cmd: &str,
+    icon_path: &str,
     options: &Option<AppLaunchOptions>,
     enable_recent_apps: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Cache metadata on first launch
+    cache_app_metadata(app_name, exec_cmd, icon_path);
+    
     if enable_recent_apps {
         update_recent_apps(app_name, true)?;
     }
@@ -668,7 +673,6 @@ fn launch_app(
                 Some(custom_cmd) if custom_cmd.trim() == "%command%" => exec_cmd.to_string(),
                 Some(custom_cmd) if custom_cmd.contains("%command%") => custom_cmd.replace("%command%", exec_cmd),
                 Some(custom_cmd) => {
-                    // If custom command doesn't contain spaces, treat it as a standalone command
                     let custom_trimmed = custom_cmd.trim();
                     if !custom_trimmed.contains(' ') {
                         custom_cmd.to_string()
@@ -685,7 +689,6 @@ fn launch_app(
         None => (exec_cmd.to_string(), home_dir.to_str().unwrap_or("")),
     };
     
-    // Helper function to try launching a command
     let try_launch = |command_str: &str| -> Result<(), std::io::Error> {
         let mut command = Command::new("sh");
         command.arg("-c").arg(command_str).current_dir(dir);
@@ -702,22 +705,13 @@ fn launch_app(
             .stderr(Stdio::null())
             .spawn()?;
         
-        // Give the process a moment to start and fail if it's going to
         std::thread::sleep(std::time::Duration::from_millis(100));
         
-        // Check if the process is still running
         match child.try_wait() {
             Ok(Some(status)) if !status.success() => {
                 Err(std::io::Error::new(std::io::ErrorKind::Other, "Process exited with error"))
             }
-            Ok(Some(_)) => {
-                // Process exited successfully (rare, but ok)
-                Ok(())
-            }
-            Ok(None) => {
-                // Process is still running - success!
-                Ok(())
-            }
+            Ok(Some(_)) | Ok(None) => Ok(()),
             Err(e) => Err(e),
         }
     };
@@ -725,7 +719,6 @@ fn launch_app(
     // Try primary command
     try_launch(&cmd)
         .or_else(|_| {
-            // Primary fallback: try the custom command alone if provided
             if let Some(opts) = options {
                 if let Some(custom_cmd) = &opts.custom_command {
                     return try_launch(custom_cmd);
@@ -734,23 +727,17 @@ fn launch_app(
             Err(std::io::Error::new(std::io::ErrorKind::Other, "Custom command fallback not available"))
         })
         .or_else(|_| {
-            // Secondary fallback: try cached terminal command
-            if let Some(terminal_cmd) = get_cached_terminal_command(app_name) {
+            if let Some((_, _, Some(terminal_cmd))) = get_cached_data(app_name) {
                 return try_launch(&terminal_cmd);
             }
             Err(std::io::Error::new(std::io::ErrorKind::Other, "Cached terminal command not available"))
         })
         .or_else(|_| {
-            // Final fallback: try to extract and cache terminal command, then launch
             if let Some(terminal_cmd) = extract_terminal_command(exec_cmd) {
-                update_terminal_command_cache(app_name, exec_cmd);
                 return try_launch(&terminal_cmd);
             }
             Err(std::io::Error::new(std::io::ErrorKind::Other, "All launch attempts failed"))
         })?;
-    
-    // Cache terminal command on successful launch for future fallbacks
-    update_terminal_command_cache(app_name, exec_cmd);
     
     Ok(())
 }
@@ -890,9 +877,9 @@ impl crate::gui::AppInterface for AppLauncher {
     }
 
     fn launch_app(&mut self, app_name: &str) {
-        if let Some((_, exec_cmd, _)) = self.results.iter().find(|(name, _, _)| name == app_name) {
+        if let Some((_, exec_cmd, icon)) = self.results.iter().find(|(name, _, _)| name == app_name) {
             let options = self.launch_options.get(app_name).cloned();
-            if launch_app(app_name, exec_cmd, &options, self.config.enable_recent_apps).is_ok() {
+            if launch_app(app_name, exec_cmd, icon, &options, self.config.enable_recent_apps).is_ok() {
                 self.quit = true;
             }
         }
@@ -924,9 +911,9 @@ impl crate::gui::AppInterface for AppLauncher {
 
 impl AppLauncher {
     fn launch_first_result(&mut self) {
-        if let Some((app_name, exec_cmd, _)) = self.results.first() {
+        if let Some((app_name, exec_cmd, icon)) = self.results.first() {
             let options = self.launch_options.get(app_name).cloned();
-            if launch_app(app_name, exec_cmd, &options, self.config.enable_recent_apps).is_ok() {
+            if launch_app(app_name, exec_cmd, icon, &options, self.config.enable_recent_apps).is_ok() {
                 self.quit = true;
             }
         }
