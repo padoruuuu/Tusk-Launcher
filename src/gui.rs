@@ -528,7 +528,7 @@ impl EframeGui {
                 app,
                 audio_controller: audio,
                 current_volume: 0.0,
-                editing: None,
+                editing_windows: HashMap::new(), // Changed from Option to HashMap
                 focused: false,
                 icon_manager: crate::app_launcher::IconManager::new(),
                 theme,
@@ -543,7 +543,7 @@ struct EframeWrapper {
     app: Box<dyn AppInterface>,
     audio_controller: crate::audio::AudioController,
     current_volume: f32,
-    editing: Option<(String, String)>,
+    editing_windows: HashMap<String, String>, // Map of app_name -> initial_options
     focused: bool,
     icon_manager: crate::app_launcher::IconManager,
     theme: Theme,
@@ -634,9 +634,9 @@ impl EframeWrapper {
                                     let gear_font = eframe::egui::TextStyle::Button.resolve(ui.style());
                                     let gear_color = self.theme.get_text_color("settings-button", resp.hovered()).unwrap_or(eframe::egui::Color32::from_rgb(64, 64, 64));
                                     ui.painter().text(new_rect.center(), center_align, gear, gear_font, gear_color);
-                                    if resp.clicked() && self.editing.is_none() {
+                                    if resp.clicked() {
                                         let prepop = self.app.get_formatted_launch_options(&app_name);
-                                        self.editing = Some((app_name.clone(), prepop));
+                                        self.editing_windows.insert(app_name.clone(), prepop);
                                     }
                                 }
                             },
@@ -680,9 +680,9 @@ impl EframeWrapper {
                                     }
                                     
                                     // Handle right click
-                                    if response.secondary_clicked() && self.editing.is_none() {
+                                    if response.secondary_clicked() {
                                         let prepop = self.app.get_formatted_launch_options(&app_name);
-                                        self.editing = Some((app_name.clone(), prepop));
+                                        self.editing_windows.insert(app_name.clone(), prepop);
                                     }
                                 });
                             },
@@ -833,10 +833,14 @@ impl eframe::App for EframeWrapper {
                 }
             });
         
-        // Check for Escape key globally - will close env window if open
+        // Check for Escape key globally
         let esc_pressed = ctx.input(|i| i.key_pressed(eframe::egui::Key::Escape));
         
-        if let Some((ref app_name, ref opts)) = self.editing {
+        // Track which windows to close
+        let mut windows_to_remove = Vec::new();
+        
+        // Create a window for each app in editing_windows
+        for (app_name, opts) in self.editing_windows.iter() {
             let env_bg = self.theme.get_style("env-input", "background-color")
                 .and_then(|s| self.theme.parse_color(&s))
                 .unwrap_or(eframe::egui::Color32::from_rgba_unmultiplied(59, 66, 82, 255));
@@ -848,8 +852,8 @@ impl eframe::App for EframeWrapper {
             let opts_clone = opts.clone();
             let theme_clone = self.theme.clone();
             
-            // Create a new viewport (separate window)
-            let viewport_id = eframe::egui::ViewportId::from_hash_of("env_variables_window");
+            // Create a unique viewport ID for each window
+            let viewport_id = eframe::egui::ViewportId::from_hash_of(format!("env_variables_window_{}", app_name));
             let viewport_builder = eframe::egui::ViewportBuilder::default()
                 .with_title(format!("Environment Variables - {}", app_name))
                 .with_inner_size([env_width, env_height])
@@ -866,7 +870,7 @@ impl eframe::App for EframeWrapper {
             // Check if we just opened the window - initialize memory
             if current_opts != opts_clone {
                 // Only reinitialize if the stored value is from a different app
-                let stored_app_key = format!("env_app_name");
+                let stored_app_key = format!("env_app_name_{}", app_name);
                 let stored_app = ctx.data_mut(|d| {
                     d.get_persisted::<String>(eframe::egui::Id::new(&stored_app_key))
                 });
@@ -883,12 +887,8 @@ impl eframe::App for EframeWrapper {
             // Use a shared flag in memory for save/cancel actions
             let action_key = format!("env_action_{}", app_name);
             
-            // If Escape was pressed, set the cancel action
-            if esc_pressed {
-                ctx.data_mut(|d| {
-                    d.insert_temp(eframe::egui::Id::new(&action_key), "cancel".to_string());
-                });
-            }
+            // If Escape was pressed in this window, set the cancel action
+            let mut local_esc_pressed = false;
             
             ctx.show_viewport_immediate(
                 viewport_id,
@@ -931,7 +931,7 @@ impl eframe::App for EframeWrapper {
                                 });
                             });
                             
-                            // Check for Escape key in the env window
+                            // Check for Escape key in this specific env window
                             if ctx.input(|i| i.key_pressed(eframe::egui::Key::Escape)) {
                                 ctx.data_mut(|d| {
                                     d.insert_temp(eframe::egui::Id::new(&action_key), "cancel".to_string());
@@ -946,7 +946,7 @@ impl eframe::App for EframeWrapper {
                 },
             );
             
-            // Check for actions
+            // Check for actions for this specific window
             let action = ctx.data_mut(|d| {
                 d.get_temp::<String>(eframe::egui::Id::new(&action_key))
             });
@@ -958,33 +958,41 @@ impl eframe::App for EframeWrapper {
                             .unwrap_or_else(|| opts.clone())
                     });
                     self.app.handle_input(&format!("LAUNCH_OPTIONS:{}:{}", app_name, final_opts));
-                    self.editing = None;
+                    windows_to_remove.push(app_name.clone());
                     ctx.data_mut(|d| {
                         d.remove::<String>(eframe::egui::Id::new(&memory_key));
                         d.remove::<String>(eframe::egui::Id::new(&action_key));
-                        d.remove::<String>(eframe::egui::Id::new("env_app_name"));
+                        d.remove::<String>(eframe::egui::Id::new(&format!("env_app_name_{}", app_name)));
                     });
                     ctx.send_viewport_cmd_to(viewport_id, eframe::egui::ViewportCommand::Close);
                 } else if action == "cancel" {
-                    self.editing = None;
+                    windows_to_remove.push(app_name.clone());
                     ctx.data_mut(|d| {
                         d.remove::<String>(eframe::egui::Id::new(&memory_key));
                         d.remove::<String>(eframe::egui::Id::new(&action_key));
-                        d.remove::<String>(eframe::egui::Id::new("env_app_name"));
+                        d.remove::<String>(eframe::egui::Id::new(&format!("env_app_name_{}", app_name)));
                     });
                     ctx.send_viewport_cmd_to(viewport_id, eframe::egui::ViewportCommand::Close);
                 }
             }
-        } else {
-            // Only handle escape in main window if env window is NOT open
-            if esc_pressed { 
-                self.app.handle_input("ESC"); 
-            }
+        }
+        
+        // Remove closed windows from editing_windows
+        for app_name in windows_to_remove {
+            self.editing_windows.remove(&app_name);
+        }
+        
+        // Only handle escape in main window if NO env windows are open
+        if esc_pressed && self.editing_windows.is_empty() { 
+            self.app.handle_input("ESC"); 
         }
         
         let enter = ctx.input(|i| i.key_pressed(eframe::egui::Key::Enter));
         
-        if enter && self.editing.is_none() { self.app.handle_input("ENTER"); }
+        // Only handle enter in main window if NO env windows are open
+        if enter && self.editing_windows.is_empty() { 
+            self.app.handle_input("ENTER"); 
+        }
         
         if self.app.should_quit() {
             ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
