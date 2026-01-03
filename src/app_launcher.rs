@@ -65,6 +65,7 @@ pub struct AppEntry {
     pub icon_path: Option<String>,
     pub exec_command: Option<String>,
     pub terminal_command: Option<String>,
+    pub last_used: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -133,14 +134,15 @@ fn unescape(s: &str) -> String {
 }
 
 fn serialize_cache(cache: &AppCache) -> String {
-    let mut s = String::from("APP_CACHE_V3\n");
+    let mut s = String::from("APP_CACHE_V4\n");
     for (app_name, entry) in &cache.apps {
-        s.push_str(&format!("{}\t{}\t{}\t{}\t{}\n",
+        s.push_str(&format!("{}\t{}\t{}\t{}\t{}\t{}\n",
             escape(app_name),
             entry.launch_options.as_ref().map(|o| escape(&o.to_string())).unwrap_or_default(),
             entry.icon_path.as_ref().map(|s| escape(s)).unwrap_or_default(),
             entry.exec_command.as_ref().map(|s| escape(s)).unwrap_or_default(),
-            entry.terminal_command.as_ref().map(|s| escape(s)).unwrap_or_default()
+            entry.terminal_command.as_ref().map(|s| escape(s)).unwrap_or_default(),
+            entry.last_used.map(|t| t.to_string()).unwrap_or_default()
         ));
     }
     s
@@ -150,11 +152,12 @@ fn deserialize_cache(s: &str) -> Result<AppCache, Box<dyn std::error::Error>> {
     let mut lines = s.lines();
     let version = lines.next();
     
+    let is_v4 = version == Some("APP_CACHE_V4");
     let is_v3 = version == Some("APP_CACHE_V3");
     let is_v2 = version == Some("APP_CACHE_V2");
     let is_v1 = version == Some("APP_CACHE_V1");
     
-    if !is_v1 && !is_v2 && !is_v3 {
+    if !is_v1 && !is_v2 && !is_v3 && !is_v4 {
         return Err("Unsupported cache version".into()); 
     }
     
@@ -164,7 +167,7 @@ fn deserialize_cache(s: &str) -> Result<AppCache, Box<dyn std::error::Error>> {
             .filter_map(|line| {
                 let parts: Vec<&str> = line.split('\t').collect();
                 
-                if is_v3 && parts.len() == 5 {
+                if is_v4 && parts.len() == 6 {
                     Some((
                         unescape(parts[0]),
                         AppEntry {
@@ -172,6 +175,18 @@ fn deserialize_cache(s: &str) -> Result<AppCache, Box<dyn std::error::Error>> {
                             icon_path: (!parts[2].is_empty()).then(|| unescape(parts[2])),
                             exec_command: (!parts[3].is_empty()).then(|| unescape(parts[3])),
                             terminal_command: (!parts[4].is_empty()).then(|| unescape(parts[4])),
+                            last_used: (!parts[5].is_empty()).then(|| parts[5].parse().ok()).flatten(),
+                        }
+                    ))
+                } else if is_v3 && parts.len() == 5 {
+                    Some((
+                        unescape(parts[0]),
+                        AppEntry {
+                            launch_options: (!parts[1].is_empty()).then(|| parts[1].parse().ok()).flatten(),
+                            icon_path: (!parts[2].is_empty()).then(|| unescape(parts[2])),
+                            exec_command: (!parts[3].is_empty()).then(|| unescape(parts[3])),
+                            terminal_command: (!parts[4].is_empty()).then(|| unescape(parts[4])),
+                            last_used: None,
                         }
                     ))
                 } else if is_v2 && parts.len() == 4 {
@@ -182,6 +197,7 @@ fn deserialize_cache(s: &str) -> Result<AppCache, Box<dyn std::error::Error>> {
                             icon_path: (!parts[2].is_empty()).then(|| unescape(parts[2])),
                             exec_command: None,
                             terminal_command: (!parts[3].is_empty()).then(|| unescape(parts[3])),
+                            last_used: None,
                         }
                     ))
                 } else if is_v1 && parts.len() == 3 {
@@ -192,6 +208,7 @@ fn deserialize_cache(s: &str) -> Result<AppCache, Box<dyn std::error::Error>> {
                             icon_path: (!parts[2].is_empty()).then(|| unescape(parts[2])),
                             exec_command: None,
                             terminal_command: None,
+                            last_used: None,
                         }
                     ))
                 } else {
@@ -222,8 +239,14 @@ pub fn update_recent_apps(app_name: &str, enable_recent_apps: bool) -> Result<()
     if !enable_recent_apps { return Ok(()); }
     
     let mut cache = APP_CACHE.lock().map_err(|e| format!("Lock error: {:?}", e))?;
+    let timestamp = time::SystemTime::now()
+        .duration_since(time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs());
+    
     if let Some(pos) = cache.apps.iter().position(|(name, _)| name == app_name) {
-        let entry = cache.apps.remove(pos);
+        let mut entry = cache.apps.remove(pos);
+        entry.1.last_used = timestamp;
         cache.apps.insert(0, entry);
         save_cache(&cache)
     } else {
@@ -283,6 +306,21 @@ fn get_cached_data(app_name: &str) -> Option<(Option<String>, Option<String>, Op
                     entry.terminal_command.clone()
                 ))
         })
+}
+
+fn get_all_cached_apps() -> Vec<AppEntryTuple> {
+    APP_CACHE.lock()
+        .ok()
+        .map(|cache| {
+            cache.apps.iter()
+                .filter_map(|(name, entry)| {
+                    let exec = entry.exec_command.as_ref()?;
+                    let icon = entry.icon_path.as_deref().unwrap_or("");
+                    Some((name.clone(), exec.clone(), icon.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 // ============================================================================
@@ -519,7 +557,6 @@ fn get_desktop_entries() -> Vec<AppEntryTuple> {
 // ============================================================================
 
 fn get_steam_entries() -> Vec<AppEntryTuple> {
-    // Fixed: Use if let pattern matching instead of ? operator
     let home = match std::env::var("HOME") {
         Ok(home) => home,
         Err(_) => return Vec::new(),
@@ -656,7 +693,7 @@ fn launch_app(
     options: &Option<AppLaunchOptions>,
     enable_recent_apps: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Cache metadata on first launch
+    // Cache metadata on every launch (updates if needed)
     cache_app_metadata(app_name, exec_cmd, icon_path);
     
     if enable_recent_apps {
@@ -792,11 +829,27 @@ impl Default for AppLauncher {
     fn default() -> Self {
         let config = crate::gui::Config::default();
         
-        let mut apps = get_desktop_entries();
-        apps.extend(get_steam_entries());
+        // Load cached apps first
+        let mut cached_apps = get_all_cached_apps();
         
-        // Deduplicate by name
-        let applications: Vec<_> = apps.into_iter()
+        // Get fresh apps from filesystem
+        let mut fresh_apps = get_desktop_entries();
+        fresh_apps.extend(get_steam_entries());
+        
+        // Merge: cached apps take priority, add new apps from filesystem
+        let mut seen_names = HashSet::new();
+        for (name, _, _) in &cached_apps {
+            seen_names.insert(name.clone());
+        }
+        
+        for app in fresh_apps {
+            if !seen_names.contains(&app.0) {
+                cached_apps.push(app);
+            }
+        }
+        
+        // Deduplicate by name (shouldn't be needed but safety check)
+        let applications: Vec<_> = cached_apps.into_iter()
             .fold(HashMap::new(), |mut acc, (name, cmd, icon)| {
                 acc.entry(name).or_insert((cmd, icon));
                 acc
