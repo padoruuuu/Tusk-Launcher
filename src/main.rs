@@ -1,8 +1,7 @@
-mod clock;
-mod power;
+mod system;
 mod app_launcher;
 mod gui;
-mod audio;
+mod sni;
 
 use std::{
     io::{Read, Write},
@@ -11,32 +10,32 @@ use std::{
     thread,
 };
 use crate::gui::{EframeGui, load_theme};
-use crate::clock::get_current_time;
+use crate::system::get_current_time;
 
 const PORT: u16 = 42069;
 const EXIT_CMD: &[u8] = b"EXIT";
 
 fn main() {
     let addr = SocketAddr::from(([127, 0, 0, 1], PORT));
-    
+
     // Check if another instance is running
     if let Ok(mut stream) = TcpStream::connect(&addr) {
         // Found another instance, tell it to exit
         let _ = stream.write_all(EXIT_CMD);
         let _ = stream.flush();
-        return; // Exit this instance
+        return;
     }
 
-    // Try to start our instance
+    // Bind our instance
     let listener = match TcpListener::bind(addr) {
-        Ok(listener) => listener,
+        Ok(l) => l,
         Err(e) => {
             eprintln!("Failed to bind to port {}: {}", PORT, e);
             process::exit(1);
         }
     };
 
-    // Set up exit handler
+    // Listen for an exit command from a future instance
     thread::spawn(move || {
         for stream in listener.incoming() {
             if let Ok(mut stream) = stream {
@@ -52,8 +51,7 @@ fn main() {
     // Load theme and run GUI
     let theme = load_theme();
     println!("Current time: {}", get_current_time(&theme.get_config()));
-    
-    // Run the GUI on the main thread
+
     let app = Box::new(app_launcher::AppLauncher::default());
     if let Err(e) = EframeGui::run(app) {
         eprintln!("Error running GUI: {}", e);
