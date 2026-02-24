@@ -13,22 +13,20 @@ serde = { version = "1.0", default-features = false, features = ["derive", "std"
 once_cell = "1.19"
 xdg = "3.0"
 rayon = "1.10"
-
-# Time handling - much lighter than chrono
+# Time handling
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "macros", "local-offset", "parsing"] }
 
 # GUI
 egui = { version = "0.33", default-features = false, features = ["default_fonts"] }
 eframe = { version = "0.33", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
 
-# Image support - only common formats needed for icons/launchers
-image = { version = "0.25", default-features = false, features = [
-    "png",
-    "jpeg",
-    "ico",
-    "bmp",
-    "tiff",
-] }
+# Image support
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "ico", "bmp", "tiff"] }
 
 # SVG support
 resvg = { version = "0.45", default-features = false, features = ["text"] }
+
+# SNI (StatusNotifierItem) tray host — D-Bus via zbus with tokio async executor
+zbus  = { version = "4", default-features = false, features = ["tokio"] }
+tokio = { version = "1", default-features = false, features = ["rt", "time", "net", "sync"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
