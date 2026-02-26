@@ -1072,30 +1072,36 @@ impl EframeWrapper {
             return;
         }
 
-        // Close menu if user clicked elsewhere.
-        if self.tray_menu_open.is_some() {
-            if ctx.input(|i| i.pointer.any_click()) {
-                // Will be cleared below if no icon was clicked.
-            }
-        }
-
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0);
 
             for icon in &icons {
+                // Passive items are idle/hidden — don't render them.
+                if icon.status == crate::sni::TrayStatus::Passive { continue; }
                 // ── Texture upload ─────────────────────────────────────────
-                if icon.icon_w > 0 && icon.icon_h > 0 && !icon.icon_rgba.is_empty()
-                    && !self.tray_textures.contains_key(&icon.id)
+                // Choose attention icon when status == NeedsAttention and one is available.
+                let use_attention = icon.status == crate::sni::TrayStatus::NeedsAttention
+                    && (!icon.attention_icon_rgba.is_empty() || icon.attention_icon_name.is_some());
+
+                let (tex_rgba, tex_w, tex_h, tex_name) = if use_attention {
+                    (&icon.attention_icon_rgba, icon.attention_icon_w, icon.attention_icon_h, &icon.attention_icon_name)
+                } else {
+                    (&icon.icon_rgba, icon.icon_w, icon.icon_h, &icon.icon_name)
+                };
+                let tex_key = if use_attention { format!("{}_attn", icon.id) } else { icon.id.clone() };
+
+                if tex_w > 0 && tex_h > 0 && !tex_rgba.is_empty()
+                    && !self.tray_textures.contains_key(&tex_key)
                 {
                     let img = egui::ColorImage::from_rgba_unmultiplied(
-                        [icon.icon_w as usize, icon.icon_h as usize],
-                        &icon.icon_rgba,
+                        [tex_w as usize, tex_h as usize],
+                        tex_rgba,
                     );
-                    let handle = ctx.load_texture(&icon.id, img, egui::TextureOptions::LINEAR);
-                    self.tray_textures.insert(icon.id.clone(), handle);
+                    let handle = ctx.load_texture(&tex_key, img, egui::TextureOptions::LINEAR);
+                    self.tray_textures.insert(tex_key.clone(), handle);
                 }
 
-                let texture = self.tray_textures.get(&icon.id).cloned();
+                let texture = self.tray_textures.get(&tex_key).cloned();
 
                 // ── Allocate icon button ────────────────────────────────────
                 let (rect, resp) = ui.allocate_exact_size(icon_size, egui::Sense::click());
@@ -1107,22 +1113,14 @@ impl EframeWrapper {
                             egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
                             egui::Color32::WHITE,
                         );
-                    } else if let Some(name) = &icon.icon_name {
-                        let resolved = icon.icon_theme_path.as_ref().and_then(|theme_dir| {
-                            let sizes = ["256x256", "128x128", "64x64", "48x48", "32x32", "22x22", "16x16", "scalable"];
-                            let exts  = ["png", "svg", "xpm"];
-                            sizes.iter().find_map(|size| {
-                                exts.iter().find_map(|ext| {
-                                    let p = format!("{theme_dir}/hicolor/{size}/apps/{name}.{ext}");
-                                    if std::path::Path::new(&p).exists() { Some(p) } else { None }
-                                })
-                            }).or_else(|| {
-                                exts.iter().find_map(|ext| {
-                                    let p = format!("{theme_dir}/{name}.{ext}");
-                                    if std::path::Path::new(&p).exists() { Some(p) } else { None }
-                                })
-                            })
-                        }).or_else(|| crate::app_launcher::resolve_icon_path(name, name, &self.config));
+                    } else if tex_name.is_some() {
+                        // No pixmap — resolve the icon name through the XDG theme search path.
+                        // tex_name is either the attention icon name or the normal icon name.
+                        let resolved = resolve_tray_icon_name(
+                            tex_name.as_deref().unwrap_or(""),
+                            icon.icon_theme_path.as_deref(),
+                            &self.config,
+                        );
 
                         if let Some(path) = resolved {
                             if let Some(tex) = self.icon_manager.get_texture(ctx, &path) {
@@ -1148,21 +1146,55 @@ impl EframeWrapper {
                     }
                 }
 
-                let resp = resp.on_hover_text(&icon.tooltip);
+                let resp = resp.on_hover_text(&icon.tooltip_title);
 
-                // Left click → Activate.
+                // Left click → Activate (or ContextMenu when ItemIsMenu == true).
                 if resp.clicked() {
                     if let Some(host) = &self.sni_host {
-                        host.activate(&icon.bus_name, &icon.obj_path);
+                        if icon.item_is_menu {
+                            // App only supports a menu, not direct activation.
+                            let pos = resp.interact_rect.center();
+                            host.context_menu(&icon.bus_name, &icon.obj_path, pos.x as i32, pos.y as i32);
+                        } else {
+                            host.activate(&icon.bus_name, &icon.obj_path);
+                        }
                     }
-                    self.tray_menu_open = None;
+                    // Close any open menu viewport.
+                    if self.tray_menu_open.is_some() {
+                        let old_id = self.tray_menu_open.take().unwrap();
+                        let vp_id  = egui::ViewportId::from_hash_of(format!("tray_menu_{}", old_id));
+                        ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Close);
+                    }
                 }
 
-                // Right click → open DBusMenu popup.
+                // Scroll wheel → forward to item (e.g. pasystray volume, media players).
+                if resp.hovered() {
+                    let scroll = ui.input(|i| i.smooth_scroll_delta);
+                    if scroll.y.abs() > 0.5 {
+                        if let Some(host) = &self.sni_host {
+                            host.scroll(&icon.bus_name, &icon.obj_path, scroll.y as i32, "vertical");
+                        }
+                    }
+                    if scroll.x.abs() > 0.5 {
+                        if let Some(host) = &self.sni_host {
+                            host.scroll(&icon.bus_name, &icon.obj_path, scroll.x as i32, "horizontal");
+                        }
+                    }
+                }
+
+                // Right click → open/close DBusMenu viewport window.
                 if resp.secondary_clicked() {
                     if self.tray_menu_open.as_deref() == Some(&icon.id) {
+                        // Toggle off: close the viewport.
+                        let vp_id = egui::ViewportId::from_hash_of(format!("tray_menu_{}", icon.id));
+                        ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Close);
                         self.tray_menu_open = None;
                     } else {
+                        // Close any previously open menu first.
+                        if let Some(old_id) = self.tray_menu_open.take() {
+                            let vp_id = egui::ViewportId::from_hash_of(format!("tray_menu_{}", old_id));
+                            ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Close);
+                        }
                         self.tray_menu_open    = Some(icon.id.clone());
                         self.tray_menu_fetched = None; // reset so a fetch fires for this icon
                         // Notify the app we're about to show the menu.
@@ -1172,7 +1204,7 @@ impl EframeWrapper {
                     }
                 }
 
-                // Render popup menu if this icon is selected.
+                // Render draggable viewport window when this icon's menu is open.
                 if self.tray_menu_open.as_deref() == Some(&icon.id) {
                     // Dispatch fetch once per open, keyed by service id.
                     if self.tray_menu_fetched.as_deref() != Some(&icon.id) {
@@ -1182,7 +1214,7 @@ impl EframeWrapper {
                         self.tray_menu_fetched = Some(icon.id.clone());
                     }
 
-                    // Only show popup when this icon has a menu_path.
+                    // Only show a window when this icon has a menu_path.
                     if icon.menu_path.is_some() {
                         let menu_items  = icon.menu_items.clone();
                         let menu_loaded = icon.menu_loaded;
@@ -1190,47 +1222,69 @@ impl EframeWrapper {
                         let bus_name    = icon.bus_name.clone();
                         let menu_path   = icon.menu_path.clone();
                         let indicator   = self.layout.tray_indicator_color;
-
-                        let popup_id  = egui::Id::new(format!("tray_menu_{}", icon_id));
-                        let popup_pos = rect.left_bottom() + egui::vec2(0.0, 2.0);
+                        let win_bg      = self.layout.win_bg;
+                        let tooltip     = icon.tooltip_title.clone();
+                        let action_key  = format!("tray_menu_action_{}", icon_id);
 
                         // Keep waking the render loop while the async fetch is in-flight.
                         if !menu_loaded {
                             ctx.request_repaint();
                         }
 
-                        let mut close_menu = false;
-                        egui::Area::new(popup_id)
-                            .order(egui::Order::Foreground)
-                            .fixed_pos(popup_pos)
-                            .show(ctx, |ui| {
-                                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                                    ui.set_min_width(120.0);
+                        // Estimate a sensible initial window height from item count.
+                        let item_count   = menu_items.iter().filter(|i| !i.is_separator).count();
+                        let win_h        = (item_count as f32 * 28.0 + 32.0).clamp(60.0, 400.0);
 
+                        let viewport_id = egui::ViewportId::from_hash_of(format!("tray_menu_{}", icon_id));
+                        let viewport    = egui::ViewportBuilder::default()
+                            .with_title(if tooltip.is_empty() { "Menu".to_string() } else { tooltip })
+                            .with_inner_size([180.0_f32, win_h])
+                            .with_resizable(false)
+                            .with_transparent(true)
+                            .with_always_on_top();
+
+                        ctx.show_viewport_immediate(viewport_id, viewport, move |ctx, _| {
+                            let action_key = format!("tray_menu_action_{}", icon_id);
+
+                            egui::CentralPanel::default()
+                                .frame(egui::Frame::NONE.fill(win_bg))
+                                .show(ctx, |ui| {
+                                    ui.add_space(4.0);
                                     if !menu_loaded {
-                                        // Fetch is in-flight.
-                                        ui.add_enabled(false, egui::Label::new("Loading..."));
+                                        ui.add_enabled(false, egui::Label::new("Loading…"));
                                     } else if menu_items.is_empty() {
-                                        // Fetch completed but no items (app has no menu).
-                                        ui.add_enabled(false, egui::Label::new("No menu"));
+                                        ui.add_enabled(false, egui::Label::new("No menu items"));
                                     } else {
                                         let clicked = render_menu_items(ui, &menu_items, indicator);
                                         if let Some(item_id) = clicked {
-                                            if let (Some(host), Some(mp)) = (&self.sni_host, &menu_path) {
-                                                host.menu_event(&bus_name, mp, item_id);
-                                            }
-                                            close_menu = true;
+                                            ctx.data_mut(|d| d.insert_temp(
+                                                egui::Id::new(&action_key),
+                                                item_id,
+                                            ));
+                                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                         }
                                     }
-                                });
-                            });
 
-                        // Close if clicked outside the popup area.
-                        if ctx.input(|i| i.pointer.any_click()) && !ctx.is_pointer_over_area() {
-                            close_menu = true;
-                        }
-                        if close_menu {
+                                    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                        ctx.data_mut(|d| d.insert_temp(
+                                            egui::Id::new(&action_key),
+                                            -1i32,
+                                        ));
+                                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                                    }
+                                });
+                        });
+
+                        // Handle result written back from inside the viewport.
+                        if let Some(item_id) = ctx.data_mut(|d| d.get_temp::<i32>(egui::Id::new(&action_key))) {
+                            if item_id >= 0 {
+                                if let (Some(host), Some(mp)) = (&self.sni_host, &menu_path) {
+                                    host.menu_event(&bus_name, mp, item_id);
+                                }
+                            }
                             self.tray_menu_open = None;
+                            ctx.data_mut(|d| d.remove::<i32>(egui::Id::new(&action_key)));
+                            ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::Close);
                         }
                     }
                 }
@@ -1249,6 +1303,86 @@ impl EframeWrapper {
             _               => {}
         }
     }
+}
+
+/// Resolve a freedesktop icon name to an absolute file path by searching the
+/// full XDG icon theme hierarchy.
+///
+/// Search order:
+///   1. App-provided `icon_theme_path` (verbatim dir supplied by the SNI item).
+///   2. User icon dirs: `~/.local/share/icons`, `~/.icons`.
+///   3. System icon dirs: `/usr/share/icons`, `/usr/local/share/icons`.
+///   4. Pixmaps fallback: `/usr/share/pixmaps`.
+///   5. `app_launcher::resolve_icon_path` (handles app-launcher icon DB).
+///
+/// For each base dir the function tries themes `hicolor` and `locolor`, then
+/// the dir root.  Within each theme it checks the size sub-dirs most-to-least
+/// precise, and the categories most-to-least specific (apps, status, devices,
+/// etc.) to avoid false positives.
+fn resolve_tray_icon_name(
+    name:           &str,
+    app_theme_path: Option<&str>,
+    config:         &Config,
+) -> Option<String> {
+    if name.is_empty() { return None; }
+
+    let exts  = ["png", "svg", "xpm"];
+    let sizes  = ["256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "22x22", "16x16", "scalable"];
+    let cats   = ["apps", "status", "devices", "actions", "categories", "emblems", "mimetypes", "places"];
+    let themes = ["hicolor", "Papirus", "Adwaita", "gnome", "locolor"];
+
+    // Build the list of base dirs to search, in priority order.
+    let mut base_dirs: Vec<std::path::PathBuf> = Vec::new();
+
+    // 1. App-provided theme path (highest priority — may be a custom icon set).
+    if let Some(p) = app_theme_path {
+        base_dirs.push(std::path::PathBuf::from(p));
+    }
+
+    // 2. User dirs.
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = std::path::Path::new(&home);
+        base_dirs.push(home.join(".local/share/icons"));
+        base_dirs.push(home.join(".icons"));
+    }
+
+    // 3. System dirs.
+    base_dirs.push(std::path::PathBuf::from("/usr/share/icons"));
+    base_dirs.push(std::path::PathBuf::from("/usr/local/share/icons"));
+
+    // Search themed sub-dirs.
+    for base in &base_dirs {
+        for theme in &themes {
+            for size in &sizes {
+                for cat in &cats {
+                    for ext in &exts {
+                        let p = base.join(theme).join(size).join(cat).join(format!("{name}.{ext}"));
+                        if p.exists() {
+                            return Some(p.to_string_lossy().into_owned());
+                        }
+                    }
+                }
+            }
+        }
+        // Also try flat root of each base dir (some apps put icons directly there).
+        for ext in &exts {
+            let p = base.join(format!("{name}.{ext}"));
+            if p.exists() {
+                return Some(p.to_string_lossy().into_owned());
+            }
+        }
+    }
+
+    // 4. Pixmaps fallback.
+    for ext in &exts {
+        let p = format!("/usr/share/pixmaps/{name}.{ext}");
+        if std::path::Path::new(&p).exists() {
+            return Some(p);
+        }
+    }
+
+    // 5. App-launcher helper (handles icon DB / .desktop cross-reference).
+    crate::app_launcher::resolve_icon_path(name, name, config)
 }
 
 /// Recursively render DBusMenu items; returns the clicked item id if any.
@@ -1391,7 +1525,7 @@ impl eframe::App for EframeWrapper {
 
         for (app_name, opts) in self.editing_windows.iter() {
             // Use cached popup dimensions – no per-frame theme lookups.
-            let env_bg  = self.layout.env_bg;
+            let win_bg  = self.layout.win_bg;
             let env_w   = self.layout.env_w;
             let env_h   = self.layout.env_h;
 
@@ -1404,6 +1538,7 @@ impl eframe::App for EframeWrapper {
                 .with_title(format!("Environment Variables - {}", app_name))
                 .with_inner_size([env_w, env_h])
                 .with_resizable(false)
+                .with_transparent(true)
                 .with_always_on_top();
 
             let mem_key    = format!("env_opts_{}", app_name);
@@ -1435,7 +1570,7 @@ impl eframe::App for EframeWrapper {
                 });
 
                 eframe::egui::CentralPanel::default()
-                    .frame(eframe::egui::Frame::NONE.fill(env_bg))
+                    .frame(eframe::egui::Frame::NONE.fill(win_bg))
                     .show(ctx, |ui| {
                         ui.vertical(|ui| {
                             ui.label(format!("Environment Variables for {}", app_clone));

@@ -102,6 +102,7 @@ impl AudioController {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn update_volume(&self) -> Result<(), Box<dyn Error>> {
         if !self.enabled {
             return Ok(());
