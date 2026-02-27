@@ -6,7 +6,8 @@ Reccomendations for features or bug reports are appreciated but if you are good 
 
 what it looks like with default theme.css:
 
-<img width="204" height="252" alt="image" src="https://github.com/user-attachments/assets/570168b0-9a85-4d38-b14f-34d35abd617b" />
+<img width="515" height="390" alt="image" src="https://github.com/user-attachments/assets/c75e19be-00bd-4e5f-83d5-57bbd0bc14dc" />
+
 
 
 More minimalist theme:
