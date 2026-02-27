@@ -4,6 +4,7 @@ use std::{
     fs::{read_to_string, create_dir_all, OpenOptions},
     io::Write,
     path::PathBuf,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use time::OffsetDateTime;
@@ -13,167 +14,178 @@ use xdg;
 use crate::app_launcher::resolve_icon_path;
 
 const DEFAULT_THEME: &str = r#"
-/* Main Window Styles */
+/* ═══════════════════════════════════════════════════════
+   Tusk Launcher — Default Theme
+   Palette:
+     bg-base    rgba(12,  12,  18,  0.96)  near-black
+     bg-surface rgba(24,  24,  36,  1)     card surface
+     bg-raised  rgba(36,  36,  52,  1)     elevated / inputs
+     bg-hover   rgba(52,  52,  74,  1)     hover state
+     accent     rgba(110, 90,  220, 1)     soft violet
+     accent-hi  rgba(135, 115, 245, 1)     accent hover
+     text       rgba(218, 216, 232, 1)     primary text
+     text-dim   rgba(120, 118, 140, 1)     secondary text
+     green      rgba(72,  210, 140, 1)     status indicator
+   ═══════════════════════════════════════════════════════ */
+
+/* Main Window
+ * Layout (px):
+ *   search-bar  top:10  h:26  → ends:36
+ *   app-list    top:40  h:130 → ends:170
+ *   tray-icon   top:174 h:18  → ends:192
+ *   time/vol    top:196 h:16  → ends:212
+ *   power       top:216 h:20  → ends:236  */
 .main-window {
-    background-color: rgba(0, 0, 0, 0.9);
-    width: 200px;
-    height: 248px;
+    background-color: rgba(12, 12, 18, 0.96);
+    width: 220px;
+    height: 242px;
     background-image: url("");
-    background-size: stretch; /* Options: stretch, fit, fill */
+    background-size: stretch;
     background-opacity: 1.0;
 }
 
-/* Search Bar Styles
- * top: 10  height: 25  → ends at 35 */
+/* Search Bar */
 .search-bar {
     position: absolute;
-    left: 20px;
+    left: 12px;
     top: 10px;
-    width: 150px;
-    height: 25px;
-    background-color: rgba(59, 66, 82, 1);
-    background-color-hover: rgba(76, 86, 106, 1);
-    border-radius: 0px;
-    color: rgba(236, 239, 244, 1);
-    color-hover: rgba(236, 239, 244, 1);
+    width: 196px;
+    height: 26px;
+    background-color: rgba(36, 36, 52, 1);
+    background-color-hover: rgba(48, 48, 68, 1);
+    border-radius: 8px;
+    color: rgba(218, 216, 232, 1);
+    color-hover: rgba(218, 216, 232, 1);
     padding: 0px;
     font-size: 12px;
 }
 
-/* App List Container
- * top: 38  height: 130  → ends at 168
- * 5 items × ~26px (22px row + 4px spacing) = 130px */
+/* App List Container */
 .app-list {
     position: absolute;
-    left: 2px;
-    top: 38px;
-    width: 109px;
+    left: 12px;
+    top: 40px;
+    width: 196px;
     height: 130px;
-    background-color: rgba(46, 52, 64, 1);
+    background-color: rgba(0, 0, 0, 0);
     padding: 0px;
     border-radius: 0px;
 }
 
-/* App Button Styles */
+/* App Button */
 .app-button {
-    background-color: rgba(122, 162, 247, 1);
-    background-color-hover: rgba(102, 138, 196, 1);
-    color: rgba(236, 239, 244, 1);
-    color-hover: rgba(236, 239, 244, 1);
-    border-radius: 0px;
+    background-color: rgba(36, 36, 52, 1);
+    background-color-hover: rgba(52, 52, 74, 1);
+    color: rgba(218, 216, 232, 1);
+    color-hover: rgba(235, 233, 250, 1);
+    border-radius: 6px;
     padding: 0px;
     font-size: 12px;
     order: 2;
 }
 
-/* App Icon Styles */
+/* App Icon */
 .app-icon {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     order: 1;
 }
 
-/* Settings Button Styles */
+/* Settings Gear */
 .settings-button {
-    width: 22px;
-    height: 22px;
-    color: rgba(122, 162, 247, 1);
-    color-hover: rgba(102, 138, 196, 0.5);
-    font-size: 16px;
+    width: 20px;
+    height: 20px;
+    color: rgba(120, 118, 140, 1);
+    color-hover: rgba(135, 115, 245, 1);
+    font-size: 14px;
     offset-x: 10px;
-    offset-y: -3px;
+    offset-y: -2px;
     order: 0;
 }
 
-/* System Tray Indicator Styles
- * top: 172  height: 18  → ends at 190
- * Rendered above the clock when enable-system-tray is true.
- * indicator-color sets the colour of the live status dot. */
+/* System Tray Strip */
 .tray-icon {
     position: absolute;
-    left: 6px;
-    top: 172px;
-    width: 188px;
+    left: 12px;
+    top: 174px;
+    width: 196px;
     height: 18px;
-    background-color: rgba(46, 52, 64, 1);
-    color: rgba(236, 239, 244, 1);
-    indicator-color: rgba(94, 206, 135, 1);
+    background-color: rgba(0, 0, 0, 0);
+    color: rgba(218, 216, 232, 1);
+    indicator-color: rgba(72, 210, 140, 1);
     font-size: 10px;
-    border-radius: 2px;
+    border-radius: 0px;
     text-align: left;
 }
 
-/* Time Display Styles
- * top: 194  height: 16  → ends at 210 */
+/* Clock */
 .time-display {
     position: absolute;
-    left: 6px;
-    top: 194px;
-    width: 188px;
+    left: 12px;
+    top: 196px;
+    width: 196px;
     height: 16px;
-    background-color: rgba(46, 52, 64, 1);
-    color: rgba(236, 239, 244, 1);
-    color-hover: rgba(236, 239, 244, 1);
+    background-color: rgba(0, 0, 0, 0);
+    color: rgba(120, 118, 140, 1);
+    color-hover: rgba(120, 118, 140, 1);
     text-align: center;
 }
 
-/* Volume Slider Styles
- * top: 194  height: 16  → ends at 210 (replaces time when audio enabled) */
+/* Volume Slider */
 .volume-slider {
     position: absolute;
-    left: 6px;
-    top: 194px;
-    width: 188px;
+    left: 12px;
+    top: 196px;
+    width: 196px;
     height: 16px;
-    background-color: rgba(46, 52, 64, 1);
-    background-color-hover: rgba(67, 76, 94, 1);
-    color: rgba(236, 239, 244, 1);
-    color-hover: rgba(236, 239, 244, 1);
-    border-radius: 4px;
+    background-color: rgba(36, 36, 52, 1);
+    background-color-hover: rgba(52, 52, 74, 1);
+    color: rgba(218, 216, 232, 1);
+    color-hover: rgba(218, 216, 232, 1);
+    border-radius: 6px;
     gap: 5px;
 }
 
-/* Power Button Styles
- * top: 214  height: 18  → ends at 232 */
+/* Power / Restart / Logout Buttons */
 .power-button {
     position: absolute;
-    left: 6px;
-    top: 214px;
-    width: 65px;
-    height: 18px;
-    background-color: rgba(122, 162, 247, 1);
-    background-color-hover: rgba(102, 138, 196, 1);
-    color: rgba(236, 239, 244, 1);
-    color-hover: rgba(236, 239, 244, 1);
-    border-radius: 0px;
+    left: 12px;
+    top: 216px;
+    width: 196px;
+    height: 20px;
+    background-color: rgba(36, 36, 52, 1);
+    background-color-hover: rgba(52, 52, 74, 1);
+    color: rgba(218, 216, 232, 1);
+    color-hover: rgba(235, 233, 250, 1);
+    border-radius: 6px;
     padding: 0px;
 }
 
-/* Edit/Environment Button Styles */
+/* Edit / Save / Cancel (env-vars popup) */
 .edit-button {
-    background-color: rgba(122, 162, 247, 1);
-    background-color-hover: rgba(102, 138, 196, 1);
-    color: rgba(236, 239, 244, 1);
-    color-hover: rgba(236, 239, 244, 1);
-    border-radius: 0px;
+    background-color: rgba(110, 90, 220, 1);
+    background-color-hover: rgba(135, 115, 245, 1);
+    color: rgba(218, 216, 232, 1);
+    color-hover: rgba(255, 255, 255, 1);
+    border-radius: 6px;
     padding: 0px;
     font-size: 12px;
 }
 
-/* Environment Variables Input */
+/* Env-Vars Input Field */
 .env-input {
-    background-color: rgba(59, 66, 82, 1);
-    color: rgba(236, 239, 244, 1);
-    color-hover: rgba(236, 239, 244, 1);
+    background-color: rgba(36, 36, 52, 1);
+    color: rgba(218, 216, 232, 1);
+    color-hover: rgba(218, 216, 232, 1);
     padding: 0px;
     font-size: 12px;
-    border-radius: 0px;
-    width: 150px;
-    height: 50px;
+    border-radius: 6px;
+    width: 200px;
+    height: 60px;
     scaling: 1.0;
 }
 
-/* Configuration Settings */
+/* Configuration */
 .config {
     enable-recent-apps: true;
     max-search-results: 5;
@@ -314,7 +326,37 @@ impl Theme {
             file.write_all(DEFAULT_THEME.as_bytes())?;
         }
 
-        let content = read_to_string(&path)?;
+        let mut content = read_to_string(&path)?;
+
+        // Migration: overwrite with the current default theme whenever the on-disk file
+        // matches any known old default (detected by sentinel values unique to each old version).
+        let is_old_default =
+            // v1: 200px wide, 0px radius, Nord blue accent
+            (content.contains("width: 200px;") && content.contains("rgba(122, 162, 247, 1)"))
+            // v2: new palette but old power-button hover (violet accent on power)
+            || (content.contains("rgba(110, 90, 220, 1)") && content.contains(".power-button"));
+        if is_old_default {
+            content = DEFAULT_THEME.to_string();
+            if let Ok(mut f) = OpenOptions::new().write(true).truncate(true).open(&path) {
+                let _ = f.write_all(content.as_bytes());
+            }
+        } else {
+            // Targeted migration: replace opaque tray-icon background with transparent.
+            let old_tray_bg = "background-color: rgba(46, 52, 64, 1);";
+            if content.contains(".tray-icon") && content.contains(old_tray_bg) {
+                if let Some(tray_pos) = content.find(".tray-icon") {
+                    if let Some(rel) = content[tray_pos..].find(old_tray_bg) {
+                        let abs = tray_pos + rel;
+                        content.replace_range(abs..abs + old_tray_bg.len(),
+                            "background-color: rgba(0, 0, 0, 0);");
+                        if let Ok(mut f) = OpenOptions::new().write(true).truncate(true).open(&path) {
+                            let _ = f.write_all(content.as_bytes());
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(Self::parse_css(&content))
     }
 
@@ -385,10 +427,6 @@ impl Theme {
 
     fn get(&self, class: &str, prop: &str) -> Option<String> {
         self.styles.get(class)?.get(&prop.to_lowercase()).cloned()
-    }
-
-    fn get_combined(&self, classes: &[&str], prop: &str) -> Option<String> {
-        classes.iter().find_map(|&c| self.get(c, prop))
     }
 
     fn parse_color(&self, s: &str) -> Option<eframe::egui::Color32> {
@@ -519,7 +557,11 @@ impl Theme {
     pub fn apply_style(&self, ui: &mut eframe::egui::Ui, class: &str) {
         let style = ui.style_mut();
         if let Some(bg) = self.get(class, "background-color").and_then(|s| self.parse_color(&s)) {
-            style.visuals.panel_fill = bg;
+            // Don't set panel_fill when transparent — egui would paint a solid
+            // background rect for the container even if we skip our own rect_filled.
+            if bg != eframe::egui::Color32::TRANSPARENT {
+                style.visuals.panel_fill = bg;
+            }
         }
         if let Some(tc) = self.get(class, "color").and_then(|s| self.parse_color(&s)) {
             style.visuals.override_text_color = Some(tc);
@@ -552,19 +594,6 @@ impl Theme {
         }
     }
 
-    pub fn apply_combined_widget_style(&self, style: &mut eframe::egui::Style, classes: &[&str]) {
-        let base  = self.get_combined(classes, "background-color")
-            .and_then(|s| self.parse_color(&s))
-            .unwrap_or(eframe::egui::Color32::TRANSPARENT);
-        let hover = self.get_combined(classes, "background-color-hover")
-            .and_then(|s| self.parse_color(&s))
-            .unwrap_or(base);
-        set_widget_bg(style, base, hover);
-        if let Some(tc) = self.get_combined(classes, "color").and_then(|s| self.parse_color(&s)) {
-            style.visuals.override_text_color = Some(tc);
-        }
-    }
-
     fn get_text_color(&self, class: &str, hovered: bool) -> Option<eframe::egui::Color32> {
         if hovered {
             self.get(class, "color-hover").and_then(|s| self.parse_color(&s))
@@ -588,11 +617,21 @@ fn set_widget_bg(style: &mut eframe::egui::Style, base: eframe::egui::Color32, h
 }
 
 fn custom_button(ui: &mut eframe::egui::Ui, label: &str, class: &str, theme: &Theme) -> eframe::egui::Response {
+    custom_button_width(ui, label, class, theme, None)
+}
+
+fn custom_button_width(ui: &mut eframe::egui::Ui, label: &str, class: &str, theme: &Theme, min_width: Option<f32>) -> eframe::egui::Response {
     let font_id = ui.style().text_styles.get(&eframe::egui::TextStyle::Button).cloned().unwrap_or_default();
     let galley  = ui.painter().layout_no_wrap(label.to_owned(), font_id.clone(), eframe::egui::Color32::WHITE);
-    let size    = galley.size() + ui.spacing().button_padding * 2.0;
-    let (rect, _) = ui.allocate_exact_size(size, eframe::egui::Sense::hover());
-    let resp = ui.interact(rect, ui.id().with(label), eframe::egui::Sense::click());
+    let text_size = galley.size() + ui.spacing().button_padding * 2.0;
+    let w = match min_width {
+        Some(mw) => text_size.x.max(mw),
+        None     => text_size.x,
+    };
+    let size = eframe::egui::vec2(w, text_size.y);
+    // Allocate with click+hover sense directly — splitting into allocate(hover) + interact(click)
+    // causes egui to consume the hover event in the discarded first response, breaking hover.
+    let (rect, resp) = ui.allocate_exact_size(size, eframe::egui::Sense::click_and_drag());
 
     if ui.is_rect_visible(rect) {
         let (base, hover_opt, round) = theme.get_frame_props(class, ui.style().visuals.widgets.inactive.bg_fill);
@@ -701,9 +740,11 @@ struct LayoutCache {
     icon_w:      f32,
     icon_h:      f32,
     vol_gap:     Option<f32>,
-    env_bg:      eframe::egui::Color32,
     env_w:       f32,
     env_h:       f32,
+    /// Tray strip dimensions, pre-fetched so render_tray_icon has no theme lookups.
+    tray_w:      f32,
+    tray_h:      f32,
     /// Colour of the live-status dot in the tray-icon widget. Pre-parsed once.
     tray_indicator_color: eframe::egui::Color32,
 }
@@ -765,14 +806,15 @@ impl LayoutCache {
         elems.sort_by_key(|(o, _)| *o);
         let elem_order = elems.into_iter().map(|(_, k)| k).collect();
 
-        let env_bg = theme.get("env-input", "background-color")
-            .and_then(|s| theme.parse_color(&s))
-            .unwrap_or(egui::Color32::from_rgba_unmultiplied(59, 66, 82, 255));
-
         // Pre-parse the tray status-dot colour once; fall back to a pleasant green.
         let tray_indicator_color = theme.get("tray-icon", "indicator-color")
             .and_then(|s| theme.parse_color(&s))
             .unwrap_or(egui::Color32::from_rgb(94, 206, 135));
+
+        // Window width minus margins; matches the CSS default.
+        let win_w = theme.get_px("main-window", "width").unwrap_or(220.0);
+        let tray_w = theme.get_px("tray-icon", "width").unwrap_or(win_w - 24.0);
+        let tray_h = theme.get_px("tray-icon", "height").unwrap_or(18.0);
 
         LayoutCache {
             win_size,
@@ -787,9 +829,10 @@ impl LayoutCache {
             icon_w:      theme.get_px("app-icon", "width").unwrap_or(22.0),
             icon_h:      theme.get_px("app-icon", "height").unwrap_or(22.0),
             vol_gap:     theme.get_px("volume-slider", "gap"),
-            env_bg,
             env_w:       theme.get_px("env-input", "width").unwrap_or(300.0),
             env_h:       theme.get_px("env-input", "height").unwrap_or(150.0),
+            tray_w,
+            tray_h,
             tray_indicator_color,
         }
     }
@@ -803,7 +846,7 @@ pub struct EframeGui;
 
 impl EframeGui {
     pub fn run(app: Box<dyn AppInterface>) -> Result<(), Box<dyn Error>> {
-        let theme  = Theme::load_or_create();
+        let theme  = Arc::new(Theme::load_or_create());
         let cfg    = theme.get_config();
         let layout = LayoutCache::build(&theme, &cfg);
         let (w, h) = (layout.win_size.x, layout.win_size.y);
@@ -848,6 +891,7 @@ impl EframeGui {
                         config: cfg,
                         sni_host,
                         tray_textures: HashMap::new(),
+                        tray_name_cache: HashMap::new(),
                         tray_menu_open: None,
                         tray_menu_fetched: None,
                     }))
@@ -863,20 +907,25 @@ struct EframeWrapper {
     current_volume:   f32,
     editing_windows:  HashMap<String, String>,
     focused:          bool,
+    /// Unified icon cache for both app icons and tray pixmaps.
     icon_manager:     crate::app_launcher::IconManager,
     layout:           LayoutCache,
     /// Clock string, refreshed at most once per second instead of every frame.
     cached_time:      String,
     last_time_update: Instant,
-    theme:            Theme,
+    /// Arc so clones in viewport closures are a pointer copy, not a deep clone.
+    theme:            Arc<Theme>,
     config:           Config,
     /// SNI host handle; `None` when `enable_system_tray` is false.
     sni_host:         Option<crate::sni::SniHost>,
-    /// Cached egui textures for tray icon pixmaps, keyed by SNI service id.
+    /// Cached egui textures for SNI ARGB32 pixmaps, keyed by "{id}" or "{id}_attn".
+    /// File-path-based tray icons go through icon_manager instead.
     tray_textures:    HashMap<String, eframe::egui::TextureHandle>,
+    /// Cache of resolved file paths for SNI icon names (avoids per-frame filesystem walk).
+    /// Maps icon-name → resolved path (None = not found, skip re-searching).
+    tray_name_cache:  HashMap<String, Option<String>>,
     /// Which tray icon's menu is open, and whether we've fetched it yet.
-    tray_menu_open:    Option<String>,   // service id
-    /// Service id for which a FetchMenu action has been dispatched (avoids duplicate fetches).
+    tray_menu_open:    Option<String>,
     tray_menu_fetched: Option<String>,
 }
 
@@ -987,28 +1036,12 @@ impl EframeWrapper {
                                 }
                             }
                             ElemKind::App => {
-                                with_custom_style(ui, |s| { self.theme.apply_combined_widget_style(s, &["app-button"]); }, |ui| {
-                                    let font_id = ui.style().text_styles.get(&eframe::egui::TextStyle::Button).cloned().unwrap_or_default();
-                                    let galley  = ui.painter().layout_no_wrap(app_name.clone(), font_id.clone(), eframe::egui::Color32::WHITE);
-                                    let size    = galley.size() + ui.spacing().button_padding * 2.0;
-                                    let (rect, _) = ui.allocate_exact_size(size, eframe::egui::Sense::hover());
-                                    let resp = ui.interact(rect, ui.id().with(&app_name), eframe::egui::Sense::click().union(eframe::egui::Sense::click_and_drag()));
-
-                                    if ui.is_rect_visible(rect) {
-                                        let (base, hover_opt, round) = self.theme.get_frame_props("app-button", ui.style().visuals.widgets.inactive.bg_fill);
-                                        let normal_tc = self.theme.get("app-button", "color").and_then(|s| self.theme.parse_color(&s)).unwrap_or(eframe::egui::Color32::WHITE);
-                                        let hover_tc  = self.theme.get("app-button", "color-hover").and_then(|s| self.theme.parse_color(&s)).unwrap_or(normal_tc);
-                                        let bg = if resp.hovered() { hover_opt.unwrap_or(base) } else { base };
-                                        let tc = if resp.hovered() { hover_tc } else { normal_tc };
-                                        ui.painter().rect_filled(rect, round, bg);
-                                        ui.painter().text(rect.center(), eframe::egui::Align2::CENTER_CENTER, &app_name, font_id, tc);
-                                    }
-
-                                    if resp.clicked()           { self.app.launch_app(&app_name); }
-                                    if resp.secondary_clicked() {
-                                        self.editing_windows.insert(app_name.clone(), self.app.get_formatted_launch_options(&app_name));
-                                    }
-                                });
+                                // Sense::click_and_drag is set inside custom_button_width — no second interact needed.
+                                let resp = custom_button_width(ui, &app_name, "app-button", &self.theme, None);
+                                if resp.clicked()           { self.app.launch_app(&app_name); }
+                                if resp.secondary_clicked() {
+                                    self.editing_windows.insert(app_name.clone(), self.app.get_formatted_launch_options(&app_name));
+                                }
                             }
                             _ => {}
                         }
@@ -1045,251 +1078,252 @@ impl EframeWrapper {
 
         self.theme.apply_style(ui, "tray-icon");
 
-        let icon_size = egui::vec2(
-            self.layout.icon_w.max(16.0),
-            self.layout.icon_h.max(16.0),
-        );
+        // Use pre-cached dimensions from LayoutCache — no theme lookups per frame.
+        let tray_w = self.layout.tray_w;
+        let tray_h = self.layout.tray_h;
 
+        const ICON_SZ: f32 = 16.0;
+        const GAP:     f32 = 3.0;
+        let icon_size = egui::vec2(ICON_SZ, ICON_SZ);
+
+        // Draw strip background (skip when transparent to avoid egui filling the area).
+        let (bg, _, round) = self.theme.get_frame_props("tray-icon", egui::Color32::TRANSPARENT);
+        let strip_origin = ui.cursor().min;
+        if bg != egui::Color32::TRANSPARENT {
+            ui.painter().rect_filled(
+                egui::Rect::from_min_size(strip_origin, egui::vec2(tray_w, tray_h)),
+                round, bg,
+            );
+        }
+
+        let (strip_rect, _) = ui.allocate_exact_size(egui::vec2(tray_w, tray_h), egui::Sense::hover());
+
+        // Clone only the visible icons from the mutex rather than the full list.
+        // try_lock avoids blocking the render thread if the SNI thread holds the lock.
         let icons: Vec<crate::sni::TrayIcon> = self
             .sni_host
             .as_ref()
             .and_then(|h| h.items.try_lock().ok())
-            .map(|g: std::sync::MutexGuard<Vec<crate::sni::TrayIcon>>| g.clone())
+            .map(|g| g.iter().filter(|i| i.status != crate::sni::TrayStatus::Passive).cloned().collect())
             .unwrap_or_default();
 
-        if icons.is_empty() {
-            with_alignment(ui, &self.theme, "tray-icon", |ui| {
-                ui.horizontal(|ui| {
-                    let dot_r = 4.0_f32;
-                    let (dot_rect, _) = ui.allocate_exact_size(
-                        egui::vec2(dot_r * 2.0 + 2.0, dot_r * 2.0),
-                        egui::Sense::hover(),
-                    );
-                    ui.painter().circle_filled(dot_rect.center(), dot_r, self.layout.tray_indicator_color);
-                    ui.label("System Tray");
-                });
-            });
+        let visible: Vec<&crate::sni::TrayIcon> = icons.iter().collect();
+
+        if visible.is_empty() {
+            let dot_r = 3.0_f32;
+            let center = egui::pos2(strip_rect.min.x + GAP + dot_r, strip_rect.center().y);
+            ui.painter().circle_filled(center, dot_r, self.layout.tray_indicator_color);
             return;
         }
 
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0);
+        // Pack icons left-to-right; each is vertically centred in the strip.
+        let cy  = strip_rect.center().y;
+        let mut x = strip_rect.min.x + GAP;
 
-            for icon in &icons {
-                // Passive items are idle/hidden — don't render them.
-                if icon.status == crate::sni::TrayStatus::Passive { continue; }
-                // ── Texture upload ─────────────────────────────────────────
-                // Choose attention icon when status == NeedsAttention and one is available.
-                let use_attention = icon.status == crate::sni::TrayStatus::NeedsAttention
-                    && (!icon.attention_icon_rgba.is_empty() || icon.attention_icon_name.is_some());
+        for icon in &visible {
+            let icon_rect = egui::Rect::from_min_size(
+                egui::pos2(x, cy - ICON_SZ * 0.5),
+                icon_size,
+            );
+            x += ICON_SZ + GAP;
 
-                let (tex_rgba, tex_w, tex_h, tex_name) = if use_attention {
-                    (&icon.attention_icon_rgba, icon.attention_icon_w, icon.attention_icon_h, &icon.attention_icon_name)
-                } else {
-                    (&icon.icon_rgba, icon.icon_w, icon.icon_h, &icon.icon_name)
-                };
-                let tex_key = if use_attention { format!("{}_attn", icon.id) } else { icon.id.clone() };
+            // ── Texture upload ──────────────────────────────────────────────
+            let use_attention = icon.status == crate::sni::TrayStatus::NeedsAttention
+                && (!icon.attention_icon_rgba.is_empty() || icon.attention_icon_name.is_some());
 
-                if tex_w > 0 && tex_h > 0 && !tex_rgba.is_empty()
-                    && !self.tray_textures.contains_key(&tex_key)
-                {
-                    let img = egui::ColorImage::from_rgba_unmultiplied(
-                        [tex_w as usize, tex_h as usize],
-                        tex_rgba,
+            let (tex_rgba, tex_w, tex_h, tex_name) = if use_attention {
+                (&icon.attention_icon_rgba, icon.attention_icon_w, icon.attention_icon_h, &icon.attention_icon_name)
+            } else {
+                (&icon.icon_rgba, icon.icon_w, icon.icon_h, &icon.icon_name)
+            };
+            let tex_key = if use_attention { format!("{}_attn", icon.id) } else { icon.id.clone() };
+
+            if tex_w > 0 && tex_h > 0 && !tex_rgba.is_empty()
+                && !self.tray_textures.contains_key(&tex_key)
+            {
+                // SNI pixmaps are ARGB32 (network byte order / big-endian u32 per pixel).
+                // egui expects RGBA, so reorder: [A,R,G,B] → [R,G,B,A].
+                let mut rgba = vec![0u8; tex_rgba.len()];
+                for (src, dst) in tex_rgba.chunks_exact(4).zip(rgba.chunks_exact_mut(4)) {
+                    dst[0] = src[1]; // R
+                    dst[1] = src[2]; // G
+                    dst[2] = src[3]; // B
+                    dst[3] = src[0]; // A
+                }
+                let img    = egui::ColorImage::from_rgba_unmultiplied([tex_w as usize, tex_h as usize], &rgba);
+                let handle = ctx.load_texture(&tex_key, img, egui::TextureOptions::LINEAR);
+                self.tray_textures.insert(tex_key.clone(), handle);
+            }
+
+            // ── Draw icon ───────────────────────────────────────────────────
+            if ui.is_rect_visible(icon_rect) {
+                let texture = self.tray_textures.get(&tex_key);
+                if let Some(tex) = texture {
+                    ui.painter().image(
+                        tex.id(), icon_rect,
+                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
                     );
-                    let handle = ctx.load_texture(&tex_key, img, egui::TextureOptions::LINEAR);
-                    self.tray_textures.insert(tex_key.clone(), handle);
-                }
-
-                let texture = self.tray_textures.get(&tex_key).cloned();
-
-                // ── Allocate icon button ────────────────────────────────────
-                let (rect, resp) = ui.allocate_exact_size(icon_size, egui::Sense::click());
-
-                if ui.is_rect_visible(rect) {
-                    if let Some(tex) = &texture {
-                        ui.painter().image(
-                            tex.id(), rect,
-                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                            egui::Color32::WHITE,
-                        );
-                    } else if tex_name.is_some() {
-                        // No pixmap — resolve the icon name through the XDG theme search path.
-                        // tex_name is either the attention icon name or the normal icon name.
-                        let resolved = resolve_tray_icon_name(
-                            tex_name.as_deref().unwrap_or(""),
-                            icon.icon_theme_path.as_deref(),
-                            &self.config,
-                        );
-
-                        if let Some(path) = resolved {
-                            if let Some(tex) = self.icon_manager.get_texture(ctx, &path) {
-                                ui.painter().image(
-                                    tex.id(), rect,
-                                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                                    egui::Color32::WHITE,
-                                );
-                            } else {
-                                ui.painter().circle_filled(rect.center(), rect.width() * 0.4, self.layout.tray_indicator_color);
-                            }
+                } else if let Some(name) = tex_name.as_deref().filter(|s: &&str| !s.is_empty()) {
+                    // Cache the resolved path so we don't re-walk the filesystem every frame.
+                    let cache_key = format!("{}|{}", name, icon.icon_theme_path.as_deref().unwrap_or(""));
+                    let resolved = self.tray_name_cache
+                        .entry(cache_key)
+                        .or_insert_with(|| resolve_tray_icon_name(name, icon.icon_theme_path.as_deref(), &self.config))
+                        .as_deref();
+                    if let Some(path) = resolved {
+                        if let Some(tex) = self.icon_manager.get_texture(ctx, path) {
+                            ui.painter().image(
+                                tex.id(), icon_rect,
+                                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                                egui::Color32::WHITE,
+                            );
                         } else {
-                            ui.painter().circle_filled(rect.center(), rect.width() * 0.4, self.layout.tray_indicator_color);
+                            ui.painter().circle_filled(icon_rect.center(), ICON_SZ * 0.4, self.layout.tray_indicator_color);
                         }
                     } else {
-                        ui.painter().circle_filled(rect.center(), rect.width() * 0.4, self.layout.tray_indicator_color);
+                        ui.painter().circle_filled(icon_rect.center(), ICON_SZ * 0.4, self.layout.tray_indicator_color);
                     }
+                } else {
+                    ui.painter().circle_filled(icon_rect.center(), ICON_SZ * 0.4, self.layout.tray_indicator_color);
+                }
+            }
 
-                    if resp.hovered() || self.tray_menu_open.as_deref() == Some(&icon.id) {
-                        ui.painter().rect_stroke(rect, 2.0,
-                            egui::Stroke::new(1.0, egui::Color32::from_white_alpha(100)),
-                            egui::StrokeKind::Middle);
+            // ── Interact ────────────────────────────────────────────────────
+            let resp = ui.interact(icon_rect, ui.id().with(&icon.id), egui::Sense::click());
+            let resp = resp.on_hover_text(&icon.tooltip_title);
+
+            // Hover highlight / open-menu outline.
+            if resp.hovered() || self.tray_menu_open.as_deref() == Some(&icon.id) {
+                ui.painter().rect_stroke(
+                    icon_rect, 2.0,
+                    egui::Stroke::new(1.0, egui::Color32::from_white_alpha(100)),
+                    egui::StrokeKind::Middle,
+                );
+            }
+
+            // Left click → Activate (or ContextMenu when ItemIsMenu == true).
+            if resp.clicked() {
+                if let Some(host) = &self.sni_host {
+                    if icon.item_is_menu {
+                        let pos = resp.interact_rect.center();
+                        host.context_menu(&icon.bus_name, &icon.obj_path, pos.x as i32, pos.y as i32);
+                    } else {
+                        host.activate(&icon.bus_name, &icon.obj_path);
                     }
                 }
+                if self.tray_menu_open.is_some() {
+                    let old_id = self.tray_menu_open.take().unwrap();
+                    let vp_id  = egui::ViewportId::from_hash_of(format!("tray_menu_{}", old_id));
+                    ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Close);
+                }
+            }
 
-                let resp = resp.on_hover_text(&icon.tooltip_title);
-
-                // Left click → Activate (or ContextMenu when ItemIsMenu == true).
-                if resp.clicked() {
+            // Scroll wheel → forward to item.
+            if resp.hovered() {
+                let scroll = ui.input(|i| i.smooth_scroll_delta);
+                if scroll.y.abs() > 0.5 {
                     if let Some(host) = &self.sni_host {
-                        if icon.item_is_menu {
-                            // App only supports a menu, not direct activation.
-                            let pos = resp.interact_rect.center();
-                            host.context_menu(&icon.bus_name, &icon.obj_path, pos.x as i32, pos.y as i32);
-                        } else {
-                            host.activate(&icon.bus_name, &icon.obj_path);
-                        }
-                    }
-                    // Close any open menu viewport.
-                    if self.tray_menu_open.is_some() {
-                        let old_id = self.tray_menu_open.take().unwrap();
-                        let vp_id  = egui::ViewportId::from_hash_of(format!("tray_menu_{}", old_id));
-                        ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Close);
+                        host.scroll(&icon.bus_name, &icon.obj_path, scroll.y as i32, "vertical");
                     }
                 }
-
-                // Scroll wheel → forward to item (e.g. pasystray volume, media players).
-                if resp.hovered() {
-                    let scroll = ui.input(|i| i.smooth_scroll_delta);
-                    if scroll.y.abs() > 0.5 {
-                        if let Some(host) = &self.sni_host {
-                            host.scroll(&icon.bus_name, &icon.obj_path, scroll.y as i32, "vertical");
-                        }
-                    }
-                    if scroll.x.abs() > 0.5 {
-                        if let Some(host) = &self.sni_host {
-                            host.scroll(&icon.bus_name, &icon.obj_path, scroll.x as i32, "horizontal");
-                        }
-                    }
-                }
-
-                // Right click → open/close DBusMenu viewport window.
-                if resp.secondary_clicked() {
-                    if self.tray_menu_open.as_deref() == Some(&icon.id) {
-                        // Toggle off: close the viewport.
-                        let vp_id = egui::ViewportId::from_hash_of(format!("tray_menu_{}", icon.id));
-                        ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Close);
-                        self.tray_menu_open = None;
-                    } else {
-                        // Close any previously open menu first.
-                        if let Some(old_id) = self.tray_menu_open.take() {
-                            let vp_id = egui::ViewportId::from_hash_of(format!("tray_menu_{}", old_id));
-                            ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Close);
-                        }
-                        self.tray_menu_open    = Some(icon.id.clone());
-                        self.tray_menu_fetched = None; // reset so a fetch fires for this icon
-                        // Notify the app we're about to show the menu.
-                        if let (Some(host), Some(menu_path)) = (&self.sni_host, &icon.menu_path) {
-                            host.menu_about_to_show(&icon.bus_name, menu_path);
-                        }
-                    }
-                }
-
-                // Render draggable viewport window when this icon's menu is open.
-                if self.tray_menu_open.as_deref() == Some(&icon.id) {
-                    // Dispatch fetch once per open, keyed by service id.
-                    if self.tray_menu_fetched.as_deref() != Some(&icon.id) {
-                        if let (Some(host), Some(menu_path)) = (&self.sni_host, &icon.menu_path) {
-                            host.fetch_menu(&icon.bus_name, menu_path, &icon.id);
-                        }
-                        self.tray_menu_fetched = Some(icon.id.clone());
-                    }
-
-                    // Only show a window when this icon has a menu_path.
-                    if icon.menu_path.is_some() {
-                        let menu_items  = icon.menu_items.clone();
-                        let menu_loaded = icon.menu_loaded;
-                        let icon_id     = icon.id.clone();
-                        let bus_name    = icon.bus_name.clone();
-                        let menu_path   = icon.menu_path.clone();
-                        let indicator   = self.layout.tray_indicator_color;
-                        let win_bg      = self.layout.win_bg;
-                        let tooltip     = icon.tooltip_title.clone();
-                        let action_key  = format!("tray_menu_action_{}", icon_id);
-
-                        // Keep waking the render loop while the async fetch is in-flight.
-                        if !menu_loaded {
-                            ctx.request_repaint();
-                        }
-
-                        // Estimate a sensible initial window height from item count.
-                        let item_count   = menu_items.iter().filter(|i| !i.is_separator).count();
-                        let win_h        = (item_count as f32 * 28.0 + 32.0).clamp(60.0, 400.0);
-
-                        let viewport_id = egui::ViewportId::from_hash_of(format!("tray_menu_{}", icon_id));
-                        let viewport    = egui::ViewportBuilder::default()
-                            .with_title(if tooltip.is_empty() { "Menu".to_string() } else { tooltip })
-                            .with_inner_size([180.0_f32, win_h])
-                            .with_resizable(false)
-                            .with_transparent(true)
-                            .with_always_on_top();
-
-                        ctx.show_viewport_immediate(viewport_id, viewport, move |ctx, _| {
-                            let action_key = format!("tray_menu_action_{}", icon_id);
-
-                            egui::CentralPanel::default()
-                                .frame(egui::Frame::NONE.fill(win_bg))
-                                .show(ctx, |ui| {
-                                    ui.add_space(4.0);
-                                    if !menu_loaded {
-                                        ui.add_enabled(false, egui::Label::new("Loading…"));
-                                    } else if menu_items.is_empty() {
-                                        ui.add_enabled(false, egui::Label::new("No menu items"));
-                                    } else {
-                                        let clicked = render_menu_items(ui, &menu_items, indicator);
-                                        if let Some(item_id) = clicked {
-                                            ctx.data_mut(|d| d.insert_temp(
-                                                egui::Id::new(&action_key),
-                                                item_id,
-                                            ));
-                                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                                        }
-                                    }
-
-                                    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                                        ctx.data_mut(|d| d.insert_temp(
-                                            egui::Id::new(&action_key),
-                                            -1i32,
-                                        ));
-                                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                                    }
-                                });
-                        });
-
-                        // Handle result written back from inside the viewport.
-                        if let Some(item_id) = ctx.data_mut(|d| d.get_temp::<i32>(egui::Id::new(&action_key))) {
-                            if item_id >= 0 {
-                                if let (Some(host), Some(mp)) = (&self.sni_host, &menu_path) {
-                                    host.menu_event(&bus_name, mp, item_id);
-                                }
-                            }
-                            self.tray_menu_open = None;
-                            ctx.data_mut(|d| d.remove::<i32>(egui::Id::new(&action_key)));
-                            ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::Close);
-                        }
+                if scroll.x.abs() > 0.5 {
+                    if let Some(host) = &self.sni_host {
+                        host.scroll(&icon.bus_name, &icon.obj_path, scroll.x as i32, "horizontal");
                     }
                 }
             }
-        });
+
+            // Right click → open / close DBusMenu viewport.
+            if resp.secondary_clicked() {
+                if self.tray_menu_open.as_deref() == Some(&icon.id) {
+                    let vp_id = egui::ViewportId::from_hash_of(format!("tray_menu_{}", icon.id));
+                    ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Close);
+                    self.tray_menu_open = None;
+                } else {
+                    if let Some(old_id) = self.tray_menu_open.take() {
+                        let vp_id = egui::ViewportId::from_hash_of(format!("tray_menu_{}", old_id));
+                        ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Close);
+                    }
+                    self.tray_menu_open    = Some(icon.id.clone());
+                    self.tray_menu_fetched = None;
+                    if let (Some(host), Some(menu_path)) = (&self.sni_host, &icon.menu_path) {
+                        host.menu_about_to_show(&icon.bus_name, menu_path);
+                    }
+                }
+            }
+
+            // Menu viewport — only rendered for the currently-open icon.
+            if self.tray_menu_open.as_deref() == Some(&icon.id) {
+                if self.tray_menu_fetched.as_deref() != Some(&icon.id) {
+                    if let (Some(host), Some(menu_path)) = (&self.sni_host, &icon.menu_path) {
+                        host.fetch_menu(&icon.bus_name, menu_path, &icon.id);
+                    }
+                    self.tray_menu_fetched = Some(icon.id.clone());
+                }
+
+                if icon.menu_path.is_some() {
+                    let menu_items  = icon.menu_items.clone();
+                    let menu_loaded = icon.menu_loaded;
+                    let icon_id     = icon.id.clone();
+                    let bus_name    = icon.bus_name.clone();
+                    let menu_path   = icon.menu_path.clone();
+                    let indicator   = self.layout.tray_indicator_color;
+                    let win_bg      = self.layout.win_bg;
+                    let tooltip     = icon.tooltip_title.clone();
+                    let action_key  = format!("tray_menu_action_{}", icon_id);
+                    let theme_menu  = Arc::clone(&self.theme);
+
+                    if !menu_loaded { ctx.request_repaint(); }
+
+                    let item_count = menu_items.iter().filter(|i| !i.is_separator).count();
+                    let win_h      = (item_count as f32 * 28.0 + 32.0).clamp(60.0, 400.0);
+
+                    let viewport_id = egui::ViewportId::from_hash_of(format!("tray_menu_{}", icon_id));
+                    let viewport    = egui::ViewportBuilder::default()
+                        .with_title(if tooltip.is_empty() { "Menu".to_string() } else { tooltip })
+                        .with_inner_size([180.0_f32, win_h])
+                        .with_resizable(false)
+                        .with_transparent(true)
+                        .with_always_on_top();
+
+                    ctx.show_viewport_immediate(viewport_id, viewport, move |ctx, _| {
+                        let action_key = format!("tray_menu_action_{}", icon_id);
+                        egui::CentralPanel::default()
+                            .frame(egui::Frame::NONE.fill(win_bg))
+                            .show(ctx, |ui| {
+                                ui.add_space(4.0);
+                                if !menu_loaded {
+                                    ui.add_enabled(false, egui::Label::new("Loading…"));
+                                } else if menu_items.is_empty() {
+                                    ui.add_enabled(false, egui::Label::new("No menu items"));
+                                } else {
+                                    let clicked = render_menu_items(ui, &menu_items, indicator, &theme_menu);
+                                    if let Some(item_id) = clicked {
+                                        ctx.data_mut(|d| d.insert_temp(egui::Id::new(&action_key), item_id));
+                                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                                    }
+                                }
+                                if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                    ctx.data_mut(|d| d.insert_temp(egui::Id::new(&action_key), -1i32));
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                                }
+                            });
+                    });
+
+                    if let Some(item_id) = ctx.data_mut(|d| d.get_temp::<i32>(egui::Id::new(&action_key))) {
+                        if item_id >= 0 {
+                            if let (Some(host), Some(mp)) = (&self.sni_host, &menu_path) {
+                                host.menu_event(&bus_name, mp, item_id);
+                            }
+                        }
+                        self.tray_menu_open = None;
+                        ctx.data_mut(|d| d.remove::<i32>(egui::Id::new(&action_key)));
+                        ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::Close);
+                    }
+                }
+            }
+        }
     }
 
     fn render_section(&mut self, ui: &mut eframe::egui::Ui, sec: &str, ctx: &eframe::egui::Context) {
@@ -1307,18 +1341,6 @@ impl EframeWrapper {
 
 /// Resolve a freedesktop icon name to an absolute file path by searching the
 /// full XDG icon theme hierarchy.
-///
-/// Search order:
-///   1. App-provided `icon_theme_path` (verbatim dir supplied by the SNI item).
-///   2. User icon dirs: `~/.local/share/icons`, `~/.icons`.
-///   3. System icon dirs: `/usr/share/icons`, `/usr/local/share/icons`.
-///   4. Pixmaps fallback: `/usr/share/pixmaps`.
-///   5. `app_launcher::resolve_icon_path` (handles app-launcher icon DB).
-///
-/// For each base dir the function tries themes `hicolor` and `locolor`, then
-/// the dir root.  Within each theme it checks the size sub-dirs most-to-least
-/// precise, and the categories most-to-least specific (apps, status, devices,
-/// etc.) to avoid false positives.
 fn resolve_tray_icon_name(
     name:           &str,
     app_theme_path: Option<&str>,
@@ -1326,62 +1348,74 @@ fn resolve_tray_icon_name(
 ) -> Option<String> {
     if name.is_empty() { return None; }
 
-    let exts  = ["png", "svg", "xpm"];
-    let sizes  = ["256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "22x22", "16x16", "scalable"];
-    let cats   = ["apps", "status", "devices", "actions", "categories", "emblems", "mimetypes", "places"];
-    let themes = ["hicolor", "Papirus", "Adwaita", "gnome", "locolor"];
+    // If the name looks like an absolute path that already exists, use it directly.
+    if name.starts_with('/') {
+        if std::path::Path::new(name).exists() { return Some(name.to_string()); }
+        for ext in &["png", "svg", "xpm"] {
+            let p = format!("{name}.{ext}");
+            if std::path::Path::new(&p).exists() { return Some(p); }
+        }
+    }
+
+    let exts   = ["png", "svg", "xpm"];
+    let sizes   = ["256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "22x22", "16x16", "scalable"];
+    let cats    = ["apps", "status", "devices", "actions", "categories", "emblems", "mimetypes", "places"];
+    let themes  = ["hicolor", "Papirus", "Papirus-Dark", "Papirus-Light",
+                   "Adwaita", "breeze", "breeze-dark", "gnome", "locolor",
+                   "oxygen", "Tango", "elementary", "Humanity"];
+
+    // Try the exact name plus common suffix-stripped variants.
+    // e.g. "audio-volume-medium-panel" → also try "audio-volume-medium".
+    let stripped = name.strip_suffix("-panel")
+        .or_else(|| name.strip_suffix("-symbolic"))
+        .or_else(|| name.strip_suffix("-rtl"))
+        .or_else(|| name.strip_suffix("-ltr"));
+    let candidates: Vec<&str> = std::iter::once(name)
+        .chain(stripped.into_iter())
+        .collect();
 
     // Build the list of base dirs to search, in priority order.
     let mut base_dirs: Vec<std::path::PathBuf> = Vec::new();
-
-    // 1. App-provided theme path (highest priority — may be a custom icon set).
-    if let Some(p) = app_theme_path {
-        base_dirs.push(std::path::PathBuf::from(p));
-    }
-
-    // 2. User dirs.
+    if let Some(p) = app_theme_path { base_dirs.push(std::path::PathBuf::from(p)); }
     if let Some(home) = std::env::var_os("HOME") {
         let home = std::path::Path::new(&home);
         base_dirs.push(home.join(".local/share/icons"));
         base_dirs.push(home.join(".icons"));
     }
-
-    // 3. System dirs.
     base_dirs.push(std::path::PathBuf::from("/usr/share/icons"));
     base_dirs.push(std::path::PathBuf::from("/usr/local/share/icons"));
 
-    // Search themed sub-dirs.
-    for base in &base_dirs {
-        for theme in &themes {
-            for size in &sizes {
-                for cat in &cats {
-                    for ext in &exts {
-                        let p = base.join(theme).join(size).join(cat).join(format!("{name}.{ext}"));
-                        if p.exists() {
-                            return Some(p.to_string_lossy().into_owned());
+    for candidate in &candidates {
+        for base in &base_dirs {
+            for theme in &themes {
+                for size in &sizes {
+                    for cat in &cats {
+                        for ext in &exts {
+                            let p = base.join(theme).join(size).join(cat).join(format!("{candidate}.{ext}"));
+                            if p.exists() { return Some(p.to_string_lossy().into_owned()); }
                         }
+                    }
+                    // Also try without category sub-dir.
+                    for ext in &exts {
+                        let p = base.join(theme).join(size).join(format!("{candidate}.{ext}"));
+                        if p.exists() { return Some(p.to_string_lossy().into_owned()); }
                     }
                 }
             }
-        }
-        // Also try flat root of each base dir (some apps put icons directly there).
-        for ext in &exts {
-            let p = base.join(format!("{name}.{ext}"));
-            if p.exists() {
-                return Some(p.to_string_lossy().into_owned());
+            // Flat root of base dir.
+            for ext in &exts {
+                let p = base.join(format!("{candidate}.{ext}"));
+                if p.exists() { return Some(p.to_string_lossy().into_owned()); }
             }
         }
-    }
-
-    // 4. Pixmaps fallback.
-    for ext in &exts {
-        let p = format!("/usr/share/pixmaps/{name}.{ext}");
-        if std::path::Path::new(&p).exists() {
-            return Some(p);
+        // Pixmaps fallback.
+        for ext in &exts {
+            let p = format!("/usr/share/pixmaps/{candidate}.{ext}");
+            if std::path::Path::new(&p).exists() { return Some(p); }
         }
     }
 
-    // 5. App-launcher helper (handles icon DB / .desktop cross-reference).
+    // App-launcher helper (handles icon DB / .desktop cross-reference).
     crate::app_launcher::resolve_icon_path(name, name, config)
 }
 
@@ -1390,38 +1424,101 @@ fn render_menu_items(
     ui:        &mut eframe::egui::Ui,
     items:     &[crate::sni::MenuItem],
     indicator: eframe::egui::Color32,
+    theme:     &Theme,
 ) -> Option<i32> {
     use eframe::egui;
     let mut clicked = None;
+
+    // Pre-fetch app-button colors once for all items in this call.
+    let bg_normal = theme.get("app-button", "background-color")
+        .and_then(|s| theme.parse_color(&s))
+        .unwrap_or(egui::Color32::from_rgb(122, 162, 247));
+    let bg_hover = theme.get("app-button", "background-color-hover")
+        .and_then(|s| theme.parse_color(&s))
+        .unwrap_or(bg_normal);
+    let tc_normal = theme.get("app-button", "color")
+        .and_then(|s| theme.parse_color(&s))
+        .unwrap_or(egui::Color32::WHITE);
+    // Disabled text: same color but semi-transparent.
+    let tc_disabled = egui::Color32::from_rgba_unmultiplied(
+        tc_normal.r(), tc_normal.g(), tc_normal.b(), 100,
+    );
+    let rounding = theme.get("app-button", "border-radius")
+        .and_then(|s| s.replace("px", "").parse::<f32>().ok())
+        .map(|v| egui::CornerRadius::same(v as u8))
+        .unwrap_or_default();
+    let font_id = ui.style().text_styles
+        .get(&egui::TextStyle::Button).cloned().unwrap_or_default();
 
     for item in items {
         if item.is_separator {
             ui.separator();
             continue;
         }
-
         if item.label.is_empty() { continue; }
 
+        let avail_w = ui.available_width();
+
         if item.children.is_empty() {
-            // Leaf item.
-            let resp = ui.add_enabled(
-                item.enabled,
-                egui::Button::new(&item.label)
-                    .frame(false)
-                    .min_size(egui::vec2(ui.available_width(), 0.0)),
+            // ── Leaf item (enabled or disabled) ──────────────────────────────
+            let galley = ui.painter().layout_no_wrap(
+                item.label.clone(), font_id.clone(), egui::Color32::WHITE,
             );
-            if resp.clicked() {
+            let h    = galley.size().y + ui.spacing().button_padding.y * 2.0;
+            let size = egui::vec2(avail_w, h);
+            let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+
+            if ui.is_rect_visible(rect) {
+                let hovered = response.hovered() && item.enabled;
+                let bg = if hovered { bg_hover } else { bg_normal };
+                let tc = if item.enabled { tc_normal } else { tc_disabled };
+
+                ui.painter().rect_filled(rect, rounding, bg);
+                ui.painter().text(
+                    egui::pos2(rect.min.x + ui.spacing().button_padding.x, rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    &item.label, font_id.clone(), tc,
+                );
+            }
+            if response.clicked() && item.enabled {
                 clicked = Some(item.id);
             }
+
         } else {
-            // Submenu.
-            egui::CollapsingHeader::new(&item.label)
-                .default_open(false)
-                .show(ui, |ui| {
-                    if let Some(id) = render_menu_items(ui, &item.children, indicator) {
+            // ── Submenu with custom hand-drawn collapsible header ─────────────
+            // CollapsingHeader ignores bg_fill overrides, so we draw it ourselves.
+            let open_key = egui::Id::new(("tray_submenu", &item.label, item.id));
+            let is_open: bool = ui.ctx().data(|d| d.get_temp(open_key).unwrap_or(false));
+
+            let arrow = if is_open { "▼ " } else { "▶ " };
+            let header_label = format!("{}{}", arrow, item.label);
+            let galley = ui.painter().layout_no_wrap(
+                header_label.clone(), font_id.clone(), egui::Color32::WHITE,
+            );
+            let h    = galley.size().y + ui.spacing().button_padding.y * 2.0;
+            let size = egui::vec2(avail_w, h);
+            let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+
+            if ui.is_rect_visible(rect) {
+                let bg = if response.hovered() { bg_hover } else { bg_normal };
+                ui.painter().rect_filled(rect, rounding, bg);
+                ui.painter().text(
+                    egui::pos2(rect.min.x + ui.spacing().button_padding.x, rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    &header_label, font_id.clone(), tc_normal,
+                );
+            }
+            if response.clicked() {
+                ui.ctx().data_mut(|d| d.insert_temp(open_key, !is_open));
+            }
+
+            if is_open {
+                ui.indent(open_key, |ui| {
+                    if let Some(id) = render_menu_items(ui, &item.children, indicator, theme) {
                         clicked = Some(id);
                     }
                 });
+            }
         }
     }
 
@@ -1531,11 +1628,11 @@ impl eframe::App for EframeWrapper {
 
             let app_clone   = app_name.clone();
             let opts_clone  = opts.clone();
-            let theme_clone = self.theme.clone();
+            let theme_clone = Arc::clone(&self.theme);
 
             let viewport_id = eframe::egui::ViewportId::from_hash_of(format!("env_{}", app_name));
             let viewport = eframe::egui::ViewportBuilder::default()
-                .with_title(format!("Environment Variables - {}", app_name))
+                .with_title(app_name.clone())
                 .with_inner_size([env_w, env_h])
                 .with_resizable(false)
                 .with_transparent(true)
@@ -1573,7 +1670,7 @@ impl eframe::App for EframeWrapper {
                     .frame(eframe::egui::Frame::NONE.fill(win_bg))
                     .show(ctx, |ui| {
                         ui.vertical(|ui| {
-                            ui.label(format!("Environment Variables for {}", app_clone));
+                            ui.label(&app_clone);
                             ui.add_space(4.0);
                             with_alignment(ui, &theme_clone, "env-input", |ui| {
                                 theme_clone.apply_style(ui, "env-input");
@@ -1629,4 +1726,4 @@ impl eframe::App for EframeWrapper {
     }
 }
 
-pub fn load_theme() -> Theme { Theme::load_or_create() }
+pub fn load_theme() -> Arc<Theme> { Arc::new(Theme::load_or_create()) }

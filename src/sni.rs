@@ -8,6 +8,7 @@
 //!   so we catch new apps even when another watcher (KDE, waybar) is active.
 //! - Per-item signal tasks subscribe to `NewIcon`, `NewStatus`, `NewToolTip`
 //!   etc. so icons refresh without polling.
+//! - Subscribes to DBusMenu `LayoutUpdated` to auto-refresh menus on change.
 //! - Items are removed when their bus name vanishes.
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -20,6 +21,25 @@ use crate::gui::Config;
 // Public types
 // ============================================================================
 
+/// Category of a tray item as reported by `org.kde.StatusNotifierItem.Category`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum TrayCategory {
+    #[default] ApplicationStatus,
+    Communications,
+    SystemServices,
+    Hardware,
+}
+
+/// Status as reported by `org.kde.StatusNotifierItem.Status`.
+/// `Passive`=hidden/idle, `Active`=normal, `NeedsAttention`=show attention icon.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum TrayStatus { #[default] Active, Passive, NeedsAttention }
+
+/// Checkmark/radio state for a menu item.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum ToggleType { #[default] None, Checkmark, Radio }
+
 #[derive(Clone, Debug, Default)]
 #[allow(dead_code)]
 pub struct MenuItem {
@@ -28,21 +48,26 @@ pub struct MenuItem {
     pub enabled:      bool,
     pub visible:      bool,
     pub is_separator: bool,
+    /// Freedesktop icon name shown beside the label (optional).
+    pub icon_name:    Option<String>,
+    /// Checkmark or radio button type (if any).
+    pub toggle_type:  ToggleType,
+    /// Current toggle state: 1 = checked/selected, 0 = unchecked, -1 = indeterminate.
+    pub toggle_state: i32,
     pub children:     Vec<MenuItem>,
 }
 
-/// Status as reported by `org.kde.StatusNotifierItem.Status`.
-/// `Passive`=hidden/idle, `Active`=normal, `NeedsAttention`=show attention icon.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum TrayStatus { #[default] Active, Passive, NeedsAttention }
-
 #[derive(Clone, Debug, Default)]
+#[allow(dead_code)]
 pub struct TrayIcon {
     pub id:              String,
     pub bus_name:        String,
     pub obj_path:        String,
 
-    /// Normal icon (pixmap path, if app supplied raw ARGB32 data).
+    /// Item category (affects display priority on some shells).
+    pub category: TrayCategory,
+
+    /// Normal icon (RGBA pixel data, if app supplied raw ARGB32).
     pub icon_rgba:       Vec<u8>,
     pub icon_w:          u32,
     pub icon_h:          u32,
@@ -73,7 +98,7 @@ pub struct TrayIcon {
     pub tooltip_title: String,
     pub tooltip_body:  String,
 
-    pub menu_path:     Option<String>,
+    pub menu_path: Option<String>,
 
     /// Menu layout fetched from DBusMenu; populated on first right-click.
     pub menu_items:    Vec<MenuItem>,
@@ -97,6 +122,8 @@ pub enum SniAction {
     MenuAboutToShow   { bus_name: String, menu_path: String },
     MenuEvent         { bus_name: String, menu_path: String, item_id: i32 },
     FetchMenu         { bus_name: String, menu_path: String, service_id: String },
+    /// Internal: re-fetch menu after a LayoutUpdated signal.
+    RefreshMenu       { bus_name: String, menu_path: String, service_id: String },
 }
 
 pub struct SniHost {
@@ -235,7 +262,6 @@ impl Watcher {
         eprintln!("SNI: registered {full}");
 
         // Emit StatusNotifierItemRegistered so other hosts / apps know.
-        // The signal argument is the service string as registered (spec §Watcher).
         {
             let conn2  = conn.clone();
             let full2  = full.clone();
@@ -309,8 +335,11 @@ async fn run_watcher(
     // Harvest items already registered with any active watcher.
     // This is the primary way we pick up apps that started before us.
     // ------------------------------------------------------------------
-    let watcher_names = ["org.kde.StatusNotifierWatcher", "org.freedesktop.StatusNotifierWatcher"];
-    for wname in &watcher_names {
+    const WATCHER_NAMES: &[&str] = &[
+        "org.kde.StatusNotifierWatcher",
+        "org.freedesktop.StatusNotifierWatcher",
+    ];
+    for wname in WATCHER_NAMES {
         let registered = query_watcher_items(&conn, wname).await;
         eprintln!("SNI: {wname} has {} registered item(s): {:?}", registered.len(), registered);
         for service in registered {
@@ -332,7 +361,6 @@ async fn run_watcher(
     // probe each for a StatusNotifierItem object.
     // ------------------------------------------------------------------
     {
-        // Use a raw call to avoid lifetime issues with the typed DBusProxy API.
         let names_msg = conn.call_method(
             Some("org.freedesktop.DBus"),
             "/org/freedesktop/DBus",
@@ -368,7 +396,7 @@ async fn run_watcher(
     // This covers apps that register after we start, in the case where
     // another watcher holds the name.
     // ------------------------------------------------------------------
-    for wname in &watcher_names {
+    for wname in WATCHER_NAMES {
         let rule = match zbus::MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
             .sender(*wname).ok()
@@ -493,7 +521,8 @@ async fn run_watcher(
                         &(item_id, "clicked", &data, timestamp),
                     ).await;
                 }
-                SniAction::FetchMenu { bus_name, menu_path, service_id } => {
+                SniAction::FetchMenu { bus_name, menu_path, service_id }
+                | SniAction::RefreshMenu { bus_name, menu_path, service_id } => {
                     let items2 = Arc::clone(&items_act);
                     let conn2  = conn_act.clone();
                     tokio::spawn(async move {
@@ -800,7 +829,6 @@ async fn probe_service(conn: &Connection, service: &str, items: TrayItems) {
 /// Returns `true` if a valid SNI item with a non-empty `Id` was found.
 async fn fetch_and_watch(conn: &Connection, service: &str, items: TrayItems) -> bool {
     if fetch_icon(conn, service, Arc::clone(&items)).await {
-        // Spawn a long-lived task that listens for property-change signals.
         let conn2   = conn.clone();
         let items2  = Arc::clone(&items);
         let service = service.to_string();
@@ -830,66 +858,71 @@ fn build_match_rule<'a>(
     Ok(b.build())
 }
 
-/// Subscribe to the SNI signals emitted by one item and re-fetch the icon
-/// whenever something changes.
+/// Subscribe to all SNI signals emitted by one item and re-fetch the icon /
+/// menu whenever something changes.
 ///
-/// Uses `MessageStream::for_match_rule` (the zbus 4 API) to get two filtered
-/// streams — one for `org.kde.StatusNotifierItem` signals and one for
-/// `PropertiesChanged` — then selects across both.
+/// Watches three sources:
+///  1. `org.kde.StatusNotifierItem`        — standard KDE / Qt / Electron signals
+///  2. `org.ayatana.AppIndicator`          — libappindicator / Ubuntu GTK apps
+///  3. `org.freedesktop.DBus.Properties` → `PropertiesChanged`
+///  4. `com.canonical.dbusmenu`          → `LayoutUpdated` (auto-refresh menus)
 async fn watch_sni_signals(conn: &Connection, service: &str, items: TrayItems) {
     let (bus_name, _obj_path) = split_service(service);
     let service_owned = service.to_string();
 
-    // Build match rules using the typed builder API.
-    // Filtering by sender alone is sufficient; each SNI item has its own
-    // unique bus name so no cross-item leakage occurs.
-    // NOTE: .path() is intentionally omitted — not available on all zbus 4 builds.
-    let sni_rule = build_match_rule(bus_name, "org.kde.StatusNotifierItem", None);
-    let sni_rule = match sni_rule {
-        Ok(r) => r,
-        Err(e) => { eprintln!("SNI: bad sni match rule: {e}"); return; }
+    // Helper: build a stream for the given interface, return None on error.
+    let make_stream = |iface: &'static str, member: Option<&'static str>| {
+        let rule = build_match_rule(bus_name, iface, member);
+        async move {
+            match rule {
+                Ok(r)  => zbus::MessageStream::for_match_rule(r, conn, None).await.ok(),
+                Err(e) => { eprintln!("SNI: bad match rule ({iface}): {e}"); None }
+            }
+        }
     };
 
-    let prop_rule = build_match_rule(
-        bus_name,
-        "org.freedesktop.DBus.Properties",
-        Some("PropertiesChanged"),
+    // Stream 1: org.kde.StatusNotifierItem signals (NewIcon, NewStatus, etc.)
+    let Some(sni_stream)   = make_stream("org.kde.StatusNotifierItem", None).await else { return };
+    // Stream 2: org.ayatana.AppIndicator signals (same signal names, different interface)
+    let aya_stream         = make_stream("org.ayatana.AppIndicator", None).await;
+    // Stream 3: PropertiesChanged on any interface
+    let Some(prop_stream)  = make_stream("org.freedesktop.DBus.Properties", Some("PropertiesChanged")).await else { return };
+    // Stream 4: DBusMenu LayoutUpdated — emitted when the menu structure changes
+    let menu_stream        = make_stream("com.canonical.dbusmenu", Some("LayoutUpdated")).await;
+
+    // Tag each stream: 0 = SNI, 1 = Ayatana, 2 = PropertiesChanged, 3 = LayoutUpdated
+    use futures_util::StreamExt as _;
+    let s0 = sni_stream.map(|r| (0u8, r));
+    let s2 = prop_stream.map(|r| (2u8, r));
+
+    // Box optional streams so they can be merged with a concrete type.
+    // When a stream is unavailable, substitute an empty stream instead.
+    type MsgResult = Result<zbus::Message, zbus::Error>;
+    type TaggedStream<'a> = futures_util::stream::BoxStream<'a, (u8, MsgResult)>;
+
+    let s1: TaggedStream<'_> = match aya_stream {
+        Some(s) => futures_util::StreamExt::map(s, |r| (1u8, r)).boxed(),
+        None    => futures_util::stream::empty().boxed(),
+    };
+    let s3: TaggedStream<'_> = match menu_stream {
+        Some(s) => futures_util::StreamExt::map(s, |r| (3u8, r)).boxed(),
+        None    => futures_util::stream::empty().boxed(),
+    };
+
+    let mut merged = futures_util::stream::select(
+        futures_util::stream::select(s0.boxed(), s1),
+        futures_util::stream::select(s2.boxed(), s3),
     );
-    let prop_rule = match prop_rule {
-        Ok(r) => r,
-        Err(e) => { eprintln!("SNI: bad prop match rule: {e}"); return; }
-    };
 
-    // Create filtered streams.  `None` for the buffer size uses the default.
-    let sni_stream = match zbus::MessageStream::for_match_rule(
-        sni_rule, conn, None,
-    ).await {
-        Ok(s)  => s,
-        Err(e) => { eprintln!("SNI: for_match_rule (sni) failed: {e}"); return; }
-    };
-
-    let prop_stream = match zbus::MessageStream::for_match_rule(
-        prop_rule, conn, None,
-    ).await {
-        Ok(s)  => s,
-        Err(e) => { eprintln!("SNI: for_match_rule (props) failed: {e}"); return; }
-    };
-
-    // Merge the two streams so we can drive both with a single poll loop,
-    // avoiding tokio::select! which requires the `macros` cargo feature.
-    // Tag each event: true = SNI signal (carry member name), false = PropertiesChanged.
-    let sni_tagged  = futures_util::StreamExt::map(sni_stream,  |r| (true,  r));
-    let prop_tagged = futures_util::StreamExt::map(prop_stream, |r| (false, r));
-    let mut merged  = futures_util::stream::select(sni_tagged, prop_tagged);
-
-    while let Some((is_sni, result)) = futures_util::StreamExt::next(&mut merged).await {
+    while let Some((source, result)) = merged.next().await {
         let member: Option<String> = match result {
             Err(_) => None,
-            Ok(m) if is_sni => m.header().member().map(|n| n.as_str().to_string()),
-            Ok(_)           => Some("PropertiesChanged".to_string()),
+            Ok(m) if source == 2 => Some("PropertiesChanged".to_string()),
+            Ok(m) if source == 3 => Some("LayoutUpdated".to_string()),
+            Ok(m)                => m.header().member().map(|n: &zbus::names::MemberName| n.as_str().to_string()),
         };
 
-        let should_refresh = matches!(
+        let is_icon_signal = matches!(
             member.as_deref(),
             Some("NewIcon")
             | Some("NewOverlayIcon")
@@ -898,12 +931,37 @@ async fn watch_sni_signals(conn: &Connection, service: &str, items: TrayItems) {
             | Some("NewStatus")
             | Some("NewToolTip")
             | Some("NewTitle")
+            | Some("NewLabel")          // Ayatana-specific
             | Some("PropertiesChanged")
         );
 
-        if should_refresh {
-            eprintln!("SNI: refresh {service_owned} ({:?})", member);
+        let is_menu_signal = member.as_deref() == Some("LayoutUpdated");
+
+        if is_icon_signal {
+            eprintln!("SNI: refresh icon {service_owned} ({member:?})");
             fetch_icon(conn, &service_owned, Arc::clone(&items)).await;
+        }
+
+        if is_menu_signal {
+            eprintln!("SNI: menu LayoutUpdated for {service_owned}");
+            // Re-fetch the menu only if one has been loaded before (i.e. the
+            // user has opened the menu at least once). This avoids background
+            // fetches for apps the user hasn't interacted with.
+            let menu_info = {
+                let locked = items.lock().unwrap();
+                locked.iter()
+                    .find(|i| i.id == service_owned)
+                    .and_then(|i| {
+                        if i.menu_loaded {
+                            i.menu_path.as_ref().map(|p| (i.bus_name.clone(), p.clone()))
+                        } else {
+                            None
+                        }
+                    })
+            };
+            if let Some((bus, path)) = menu_info {
+                fetch_menu_internal(conn, &bus, &path, &service_owned, Arc::clone(&items)).await;
+            }
         }
     }
 }
@@ -922,31 +980,68 @@ async fn resolve_unique_name(conn: &Connection, name: &str) -> Option<String> {
         .map(|n| n.to_string())
 }
 
-/// GetAll filtered to `org.kde.StatusNotifierItem`.
-async fn try_get_all_sni(props: &zbus::fdo::PropertiesProxy<'_>) -> PropMap {
-    let iface = match zbus::names::InterfaceName::try_from("org.kde.StatusNotifierItem") {
-        Ok(i) => i, Err(_) => return PropMap::new(),
-    };
-    props.get_all(zbus::zvariant::Optional::from(Some(iface))).await
-        .unwrap_or_default()
-}
-
-/// GetAll filtered to `org.ayatana.AppIndicator`.
-/// Some libappindicator apps (older nm-applet builds) only respond to this
-/// interface name and return empty for `org.kde.StatusNotifierItem`.
-async fn try_get_all_sni_ayatana(props: &zbus::fdo::PropertiesProxy<'_>) -> PropMap {
-    let iface = match zbus::names::InterfaceName::try_from("org.ayatana.AppIndicator") {
-        Ok(i) => i, Err(_) => return PropMap::new(),
-    };
-    props.get_all(zbus::zvariant::Optional::from(Some(iface))).await
-        .unwrap_or_default()
-}
-
-/// GetAll with no interface filter — broad compat with Electron / libappindicator.
+/// All known SNI interface names, in priority order.
 ///
-/// Sends `GetAll("")` as a raw D-Bus call so we definitely pass the empty string
-/// on the wire, which some implementations require.  `Optional::from(None)` in
-/// zbus may encode differently and some apps reject it.
+/// `org.kde.StatusNotifierItem`      — standard; used by Qt, Electron, most apps.
+/// `org.ayatana.AppIndicator`        — libappindicator (GTK Ubuntu apps, nm-applet).
+/// `org.freedesktop.StatusNotifierItem` — older/alternate freedesktop name.
+const SNI_INTERFACES: &[&str] = &[
+    "org.kde.StatusNotifierItem",
+    "org.ayatana.AppIndicator",
+    "org.freedesktop.StatusNotifierItem",
+];
+
+/// Call `GetAll(interface)` for the given interface name via a raw D-Bus call
+/// so we control the exact wire encoding.  Returns an empty map on any failure.
+/// Validates that the mandatory `Id` property is present before returning.
+async fn get_all_for_interface(
+    conn:      &Connection,
+    bus_name:  &str,
+    obj_path:  &str,
+    interface: &str,
+) -> PropMap {
+    let msg = match conn.call_method(
+        Some(bus_name), obj_path,
+        Some("org.freedesktop.DBus.Properties"), "GetAll",
+        &(interface,),
+    ).await {
+        Ok(m)  => m,
+        Err(e) => {
+            eprintln!("SNI: GetAll({interface:?}) failed {bus_name}{obj_path}: {e}");
+            return PropMap::new();
+        }
+    };
+
+    let all: PropMap = match msg.body().deserialize() {
+        Ok(a)  => a,
+        Err(e) => {
+            eprintln!("SNI: GetAll({interface:?}) deserialize failed {bus_name}{obj_path}: {e}");
+            return PropMap::new();
+        }
+    };
+
+    eprintln!("SNI: GetAll({interface:?}) {bus_name}{obj_path} -> {} keys", all.len());
+
+    if all.contains_key("Id") { all } else { PropMap::new() }
+}
+
+/// Try `GetAll` with each known SNI interface name in turn.
+/// Returns the first non-empty result that contains the mandatory `Id` key.
+async fn try_get_all_sni_interfaces(
+    conn:     &Connection,
+    bus_name: &str,
+    obj_path: &str,
+) -> PropMap {
+    for iface in SNI_INTERFACES {
+        let map = get_all_for_interface(conn, bus_name, obj_path, iface).await;
+        if !map.is_empty() { return map; }
+    }
+    PropMap::new()
+}
+
+/// `GetAll("")` — pass an explicit empty string on the wire.
+/// Some implementations (Electron/Discord) return their full prop dict only
+/// when no interface filter is applied; filtered calls return empty.
 async fn try_get_all_unfiltered(
     conn:     &Connection,
     bus_name: &str,
@@ -955,7 +1050,7 @@ async fn try_get_all_unfiltered(
     let msg = match conn.call_method(
         Some(bus_name), obj_path,
         Some("org.freedesktop.DBus.Properties"), "GetAll",
-        &("",),  // empty string = all interfaces
+        &("",),
     ).await {
         Ok(m)  => m,
         Err(e) => { eprintln!("SNI: GetAll(\"\") failed {bus_name}{obj_path}: {e}"); return PropMap::new(); }
@@ -963,47 +1058,39 @@ async fn try_get_all_unfiltered(
 
     let all: PropMap = match msg.body().deserialize() {
         Ok(a)  => a,
-        Err(e) => { eprintln!("SNI: GetAll deserialize failed {bus_name}{obj_path}: {e}"); return PropMap::new(); }
+        Err(e) => { eprintln!("SNI: GetAll(\"\") deserialize failed {bus_name}{obj_path}: {e}"); return PropMap::new(); }
     };
 
     eprintln!("SNI: GetAll(\"\") {bus_name}{obj_path} -> keys: {:?}", all.keys().collect::<Vec<_>>());
-
-    // Accept only if mandatory SNI "Id" property is present.
     if all.contains_key("Id") { all } else { PropMap::new() }
 }
 
-/// GetAll filtered to `org.ayatana.AppIndicator` — for Ayatana / Ubuntu
-/// libappindicator apps that don't respond to the KDE interface name.
-async fn try_get_all_ayatana(
+/// `GetAll()` with zero arguments — some old Ayatana/Qt builds implement
+/// `GetAll` with signature `()` instead of `(s)` and reject filtered calls.
+async fn try_get_all_no_args(
     conn:     &Connection,
     bus_name: &str,
     obj_path: &str,
 ) -> PropMap {
-    let msg = match conn.call_method(
+    match conn.call_method(
         Some(bus_name), obj_path,
         Some("org.freedesktop.DBus.Properties"), "GetAll",
-        &("org.ayatana.AppIndicator",),
+        &(),
     ).await {
-        Ok(m)  => m,
-        Err(_) => return PropMap::new(),
-    };
-
-    let all: PropMap = match msg.body().deserialize() {
-        Ok(a)  => a,
-        Err(_) => return PropMap::new(),
-    };
-
-    eprintln!("SNI: GetAll(ayatana) {bus_name}{obj_path} -> keys: {:?}", all.keys().collect::<Vec<_>>());
-
-    if all.contains_key("Id") { all } else { PropMap::new() }
+        Ok(msg) => {
+            let candidate: PropMap = msg.body().deserialize().unwrap_or_default();
+            eprintln!("SNI: GetAll() {bus_name}{obj_path} -> keys: {:?}", candidate.keys().collect::<Vec<_>>());
+            if candidate.contains_key("Id") { candidate } else { PropMap::new() }
+        }
+        Err(e) => { eprintln!("SNI: GetAll() failed {bus_name}{obj_path}: {e}"); PropMap::new() }
+    }
 }
 
 /// Fetch each SNI property individually via `Get(interface, name)`.
 ///
-/// This handles apps that implement `org.freedesktop.DBus.Properties` but
-/// whose `GetAll` only accepts zero or no arguments (some old Ayatana/Qt
-/// builds emit "Method GetAll with signature 's' doesn't exist").
-/// We try both the KDE and Ayatana interface names.
+/// Handles apps that implement `org.freedesktop.DBus.Properties` but whose
+/// `GetAll` only accepts zero arguments (some old Ayatana/Qt builds).
+/// Tries each interface in `SNI_INTERFACES` order.
 async fn try_get_props_individually(
     conn:     &Connection,
     bus_name: &str,
@@ -1011,10 +1098,6 @@ async fn try_get_props_individually(
 ) -> PropMap {
     use zbus::zvariant::Value;
 
-    const INTERFACES: &[&str] = &[
-        "org.kde.StatusNotifierItem",
-        "org.ayatana.AppIndicator",
-    ];
     const PROPS: &[&str] = &[
         "Id", "Category", "Status", "Title",
         "IconName", "IconThemePath",
@@ -1026,9 +1109,8 @@ async fn try_get_props_individually(
         "Menu",
     ];
 
-    for iface in INTERFACES {
-        // Quick probe: try fetching "Id" first.  If that fails this interface
-        // is not supported and we move on.
+    for iface in SNI_INTERFACES {
+        // Quick probe: fetch "Id" first. Failure means this interface is not supported.
         let id_result = conn.call_method(
             Some(bus_name), obj_path,
             Some("org.freedesktop.DBus.Properties"), "Get",
@@ -1036,15 +1118,10 @@ async fn try_get_props_individually(
         ).await;
         eprintln!("SNI: Get({iface}, Id) at {bus_name}{obj_path} -> {}",
             match &id_result { Ok(_) => "ok".to_string(), Err(e) => format!("err: {e}") });
-        let id_msg = match id_result {
-            Ok(m)  => m,
-            Err(_) => continue,
-        };
+        let id_msg = match id_result { Ok(m) => m, Err(_) => continue };
 
-        // The return type of Get is `v` (variant wrapping the real value).
         let id_val: zbus::zvariant::OwnedValue = match id_msg.body().deserialize() {
-            Ok(v)  => v,
-            Err(_) => continue,
+            Ok(v) => v, Err(_) => continue,
         };
         let id_inner = match &*id_val {
             Value::Value(v) => zbus::zvariant::OwnedValue::try_from(v.as_ref()).ok(),
@@ -1057,9 +1134,7 @@ async fn try_get_props_individually(
 
         // Id confirmed — fetch the rest.
         let mut map = PropMap::new();
-        if let Some(val) = id_inner {
-            map.insert("Id".to_string(), val);
-        }
+        if let Some(val) = id_inner { map.insert("Id".to_string(), val); }
 
         for prop in PROPS.iter().filter(|&&p| p != "Id") {
             let Ok(msg) = conn.call_method(
@@ -1071,14 +1146,11 @@ async fn try_get_props_individually(
             let Ok(val): Result<zbus::zvariant::OwnedValue, _> = msg.body().deserialize()
             else { continue };
 
-            // Unwrap the `v` wrapper returned by Get.
             let inner = match &*val {
                 Value::Value(v) => zbus::zvariant::OwnedValue::try_from(v.as_ref()).ok(),
                 _ => Some(val),
             };
-            if let Some(inner) = inner {
-                map.insert(prop.to_string(), inner);
-            }
+            if let Some(inner) = inner { map.insert(prop.to_string(), inner); }
         }
 
         eprintln!("SNI: Get-individual {bus_name}{obj_path} (iface={iface}) -> keys: {:?}",
@@ -1092,23 +1164,15 @@ async fn try_get_props_individually(
 /// Fetch properties from `service` ("bus_name/obj_path") and upsert into
 /// `items`.  Returns `true` if a valid item with a non-empty `Id` was found.
 ///
-/// Many apps (Electron, libappindicator) implement `GetAll` without honouring
-/// the interface-name filter, returning an empty dict when a specific interface
-/// is requested.  We therefore try two strategies in order:
-///
-/// 1. `GetAll("org.kde.StatusNotifierItem")` — the strictly-correct call.
-/// 2. `GetAll("")` — no-filter; works with Discord, Electron, most GTK apps.
+/// Strategy cascade (stops at first success):
+///   1a. GetAll("org.kde.StatusNotifierItem")         — standard KDE/Qt/Electron
+///   1b. GetAll("org.ayatana.AppIndicator")           — libappindicator / nm-applet
+///   1c. GetAll("org.freedesktop.StatusNotifierItem") — older freedesktop name
+///   2.  GetAll("")                                    — unfiltered; Discord/Electron
+///   3.  GetAll()  (zero args)                        — old Ayatana/Qt builds
+///   4.  Get(iface, prop) per-property loop            — last resort
 async fn fetch_icon(conn: &Connection, service: &str, items: TrayItems) -> bool {
     let (bus_name, obj_path) = split_service(service);
-
-    let props = match zbus::fdo::PropertiesProxy::builder(conn)
-        .destination(bus_name)
-        .and_then(|b| b.path(obj_path))
-        .map(|b| b.build())
-    {
-        Ok(f) => match f.await { Ok(p) => p, Err(_) => return false },
-        Err(_) => return false,
-    };
 
     // Resolve well-known names to their unique name (:1.xxx) before GetAll.
     // Discord and other Electron apps only respond to their unique name.
@@ -1122,11 +1186,10 @@ async fn fetch_icon(conn: &Connection, service: &str, items: TrayItems) -> bool 
 
     // Fast-fail: introspect the object path before running GetAll strategies.
     //
-    // This single round-trip tells us:
-    //   - "UnknownObject"  → path missing entirely; skip all 4 strategies
-    //   - "UnknownMethod"  → no Introspectable, but path may exist; continue
-    //   - XML with SNI interface declared → confirmed SNI item; continue
-    //   - XML without SNI interface → path exists but is something else; skip
+    //   - "UnknownObject"  → path missing; skip all strategies
+    //   - "UnknownMethod"  → no Introspectable; continue (may still be SNI)
+    //   - XML with SNI interface → confirmed; continue
+    //   - XML without SNI and without Properties → skip
     //
     // Saves 4+ redundant GetAll round-trips for the majority of non-SNI buses.
     let introspect_result = tokio::time::timeout(
@@ -1141,81 +1204,28 @@ async fn fetch_icon(conn: &Connection, service: &str, items: TrayItems) -> bool 
         Err(_) => return false,  // timeout
         Ok(Err(e)) if err_is_unknown_object(e) => return false,  // path does not exist
         Ok(Ok(msg)) => {
-            // Path exists — check if SNI interface is declared.
             let xml: String = msg.body().deserialize().unwrap_or_default();
-            if !xml.is_empty() && !xml_has_sni_interface(&xml) {
-                // The path exists but is not an SNI item (e.g. an internal KDE
-                // bus that happens to expose /StatusNotifierItem for something else).
+            if !xml.is_empty() && !xml_has_sni_interface(&xml) && !xml_has_properties_interface(&xml) {
                 return false;
             }
-            // xml is empty (unusual) or has SNI interface → proceed with GetAll.
         }
-        Ok(Err(_)) => {} // UnknownMethod = no Introspectable → proceed with GetAll strategies
+        Ok(Err(_)) => {} // UnknownMethod = no Introspectable → proceed
     }
 
-    // Rebuild the PropertiesProxy with the resolved unique name.
-    let props = if effective_bus != bus_name {
-        match zbus::fdo::PropertiesProxy::builder(conn)
-            .destination(effective_bus)
-            .and_then(|b| b.path(obj_path))
-            .map(|b| b.build())
-        {
-            Ok(f) => match f.await { Ok(p) => p, Err(_) => return false },
-            Err(_) => return false,
-        }
-    } else {
-        props
-    };
+    // Strategy 1: try all known SNI interface names in order.
+    let mut all = try_get_all_sni_interfaces(conn, effective_bus, obj_path).await;
 
-    // Strategy 1a: GetAll("org.kde.StatusNotifierItem") — standard KDE/Qt/Electron.
-    let mut all = try_get_all_sni(&props).await;
-    if !all.is_empty() {
-        eprintln!("SNI: GetAll(sni/kde) {service} -> {} keys", all.len());
-    }
-
-    // Strategy 1b: GetAll("org.ayatana.AppIndicator") — libappindicator apps.
-    // Try this early because Ayatana items declare this interface in their XML.
-    if all.is_empty() {
-        all = try_get_all_sni_ayatana(&props).await;
-        if !all.is_empty() {
-            eprintln!("SNI: GetAll(sni/ayatana) {service} -> {} keys", all.len());
-        }
-    }
-
-    // Strategy 2: unfiltered GetAll("") — Electron/Discord apps that return
-    // empty dict when filtered by interface name but full props otherwise.
+    // Strategy 2: unfiltered GetAll("") — Electron/Discord.
     if all.is_empty() {
         all = try_get_all_unfiltered(conn, effective_bus, obj_path).await;
     }
 
-    // Strategy 3: GetAll("org.ayatana.AppIndicator") raw call — older Ubuntu
-    // libappindicator builds that require the exact raw string interface name.
+    // Strategy 3: GetAll() with zero args — old Ayatana/Qt builds.
     if all.is_empty() {
-        all = try_get_all_ayatana(conn, effective_bus, obj_path).await;
+        all = try_get_all_no_args(conn, effective_bus, obj_path).await;
     }
 
-    // Strategy 3b: GetAll with NO argument — some old Ayatana/Qt builds
-    // implement GetAll() with signature "()" instead of "(s)".
-    if all.is_empty() {
-        match conn.call_method(
-            Some(effective_bus), obj_path,
-            Some("org.freedesktop.DBus.Properties"), "GetAll",
-            &(),  // zero arguments
-        ).await {
-            Ok(msg) => {
-                let candidate: PropMap = msg.body().deserialize().unwrap_or_default();
-                eprintln!("SNI: GetAll() {effective_bus}{obj_path} -> keys: {:?}", candidate.keys().collect::<Vec<_>>());
-                if candidate.contains_key("Id") {
-                    all = candidate;
-                }
-            }
-            Err(e) => eprintln!("SNI: GetAll() failed {effective_bus}{obj_path}: {e}"),
-        }
-    }
-
-    // Strategy 4: individual Get(interface, property) calls — apps that
-    // implement org.freedesktop.DBus.Properties but whose GetAll only
-    // accepts zero arguments (old Qt/Ayatana builds).
+    // Strategy 4: individual Get(interface, prop) — last resort.
     if all.is_empty() {
         eprintln!("SNI: trying Get-individual for {effective_bus}{obj_path}");
         all = try_get_props_individually(conn, effective_bus, obj_path).await;
@@ -1233,6 +1243,13 @@ async fn fetch_icon(conn: &Connection, service: &str, items: TrayItems) -> bool 
     let icon_theme_path = get_str(&all, "IconThemePath").filter(|s| !s.is_empty());
     let menu_path       = get_obj_path(&all, "Menu");
 
+    let category = match get_str(&all, "Category").as_deref() {
+        Some("Communications")   => TrayCategory::Communications,
+        Some("SystemServices")   => TrayCategory::SystemServices,
+        Some("Hardware")         => TrayCategory::Hardware,
+        _                        => TrayCategory::ApplicationStatus,
+    };
+
     // Status: Active | Passive | NeedsAttention (default Active)
     let status = match get_str(&all, "Status").as_deref() {
         Some("Passive")        => TrayStatus::Passive,
@@ -1245,14 +1262,15 @@ async fn fetch_icon(conn: &Connection, service: &str, items: TrayItems) -> bool 
 
     // Attention icon (shown when status == NeedsAttention)
     let attention_icon_name = get_str(&all, "AttentionIconName").filter(|s| !s.is_empty());
-    let attention_pixmap    = all.get("AttentionIconPixmap").and_then(|v| parse_icon_pixmap(v));
+    let (attention_icon_w, attention_icon_h, attention_icon_rgba) =
+        unpack_pixmap(all.get("AttentionIconPixmap"));
 
     // Overlay icon (drawn on top of main icon)
     let overlay_icon_name = get_str(&all, "OverlayIconName").filter(|s| !s.is_empty());
-    let overlay_pixmap    = all.get("OverlayIconPixmap").and_then(|v| parse_icon_pixmap(v));
+    let (overlay_icon_w, overlay_icon_h, overlay_icon_rgba) =
+        unpack_pixmap(all.get("OverlayIconPixmap"));
 
     // ToolTip: spec property is a compound struct (s a(iiay) s s).
-    // Fields: icon_name, icon_pixmaps, title, body.
     // Fall back through Title then Id for a usable display string.
     let (tooltip_title, tooltip_body) = parse_tooltip(&all)
         .unwrap_or_else(|| {
@@ -1261,31 +1279,27 @@ async fn fetch_icon(conn: &Connection, service: &str, items: TrayItems) -> bool 
             (title, String::new())
         });
 
-    let pixmap = all.get("IconPixmap").and_then(|v| parse_icon_pixmap(v));
+    let (icon_w, icon_h, icon_rgba) = unpack_pixmap(all.get("IconPixmap"));
 
     eprintln!(
-        "SNI: found {service}  id={id_str}  status={status:?}  item_is_menu={item_is_menu}          icon_name={icon_name:?}  theme={icon_theme_path:?}          pixmap={}  attn_icon={attention_icon_name:?}  menu={menu_path:?}",
-        pixmap.as_ref().map_or_else(|| "none".to_string(), |(w,h,d)| format!("{w}x{h}({} bytes)", d.len()))
+        "SNI: found {service}  id={id_str}  status={status:?}  item_is_menu={item_is_menu} \
+         icon_name={icon_name:?}  theme={icon_theme_path:?} \
+         pixmap={icon_w}x{icon_h}  attn_icon={attention_icon_name:?}  menu={menu_path:?}"
     );
 
     // Store the unique name in bus_name so signal watchers / menu calls work.
     // Discord and Electron apps only accept calls on their unique name.
     let icon = TrayIcon {
-        id:              service.to_string(),
-        bus_name:        effective_bus.to_string(),
-        obj_path:        obj_path.to_string(),
-        icon_rgba:       pixmap.as_ref().map(|(_, _, d)| d.clone()).unwrap_or_default(),
-        icon_w:          pixmap.as_ref().map(|&(w, _, _)| w).unwrap_or(0),
-        icon_h:          pixmap.as_ref().map(|&(_, h, _)| h).unwrap_or(0),
+        id:         service.to_string(),
+        bus_name:   effective_bus.to_string(),
+        obj_path:   obj_path.to_string(),
+        category,
+        icon_rgba, icon_w, icon_h,
         icon_name,
         icon_theme_path,
-        attention_icon_rgba: attention_pixmap.as_ref().map(|(_, _, d)| d.clone()).unwrap_or_default(),
-        attention_icon_w:    attention_pixmap.as_ref().map(|&(w, _, _)| w).unwrap_or(0),
-        attention_icon_h:    attention_pixmap.as_ref().map(|&(_, h, _)| h).unwrap_or(0),
+        attention_icon_rgba, attention_icon_w, attention_icon_h,
         attention_icon_name,
-        overlay_icon_rgba: overlay_pixmap.as_ref().map(|(_, _, d)| d.clone()).unwrap_or_default(),
-        overlay_icon_w:    overlay_pixmap.as_ref().map(|&(w, _, _)| w).unwrap_or(0),
-        overlay_icon_h:    overlay_pixmap.as_ref().map(|&(_, h, _)| h).unwrap_or(0),
+        overlay_icon_rgba, overlay_icon_w, overlay_icon_h,
         overlay_icon_name,
         status,
         item_is_menu,
@@ -1318,6 +1332,7 @@ async fn fetch_icon(conn: &Connection, service: &str, items: TrayItems) -> bool 
 // DBusMenu fetching
 // ============================================================================
 
+/// Public entry-point: fetch menu from the action-handler loop.
 async fn do_fetch_menu(
     conn:       &Connection,
     bus_name:   &str,
@@ -1326,7 +1341,18 @@ async fn do_fetch_menu(
     items:      TrayItems,
 ) {
     eprintln!("SNI: fetch_menu  bus={bus_name}  path={menu_path}  id={service_id}");
+    fetch_menu_internal(conn, bus_name, menu_path, service_id, items).await;
+}
 
+/// Core DBusMenu `GetLayout` call, shared by the action handler and the
+/// `LayoutUpdated` signal handler.
+async fn fetch_menu_internal(
+    conn:       &Connection,
+    bus_name:   &str,
+    menu_path:  &str,
+    service_id: &str,
+    items:      TrayItems,
+) {
     // GetLayout(parentId=0, recursionDepth=-1, propertiesToGet=[])
     let result = conn.call_method(
         Some(bus_name), menu_path,
@@ -1338,10 +1364,7 @@ async fn do_fetch_menu(
         Ok(m)  => m,
         Err(e) => {
             eprintln!("SNI: GetLayout failed for {bus_name}{menu_path}: {e}");
-            let mut locked = items.lock().unwrap();
-            if let Some(icon) = locked.iter_mut().find(|i| i.id == service_id) {
-                icon.menu_loaded = true;
-            }
+            mark_menu_loaded(&items, service_id);
             return;
         }
     };
@@ -1352,10 +1375,7 @@ async fn do_fetch_menu(
         Ok(v)  => v,
         Err(e) => {
             eprintln!("SNI: GetLayout deserialize failed for {bus_name}: {e}");
-            let mut locked = items.lock().unwrap();
-            if let Some(icon) = locked.iter_mut().find(|i| i.id == service_id) {
-                icon.menu_loaded = true;
-            }
+            mark_menu_loaded(&items, service_id);
             return;
         }
     };
@@ -1370,6 +1390,15 @@ async fn do_fetch_menu(
         icon.menu_loaded   = true;
     } else {
         eprintln!("SNI: fetch_menu — service_id '{service_id}' not found in tray items");
+    }
+}
+
+/// Mark a tray item's menu as loaded (even if empty) so the GUI stops showing
+/// a loading spinner.
+fn mark_menu_loaded(items: &TrayItems, service_id: &str) {
+    let mut locked = items.lock().unwrap();
+    if let Some(icon) = locked.iter_mut().find(|i| i.id == service_id) {
+        icon.menu_loaded = true;
     }
 }
 
@@ -1393,22 +1422,38 @@ fn parse_menu_items(children: &[zbus::zvariant::OwnedValue]) -> Vec<MenuItem> {
 
         let id = match &fields[0] { Value::I32(v) => *v, _ => continue };
 
-        let props: HashMap<String, String> = match &fields[1] {
+        let props: HashMap<String, zbus::zvariant::OwnedValue> = match &fields[1] {
             Value::Dict(d) => {
                 d.iter().filter_map(|(k, v)| {
                     let key = match k { Value::Str(s) => s.to_string(), _ => return None };
-                    let val = string_from_value(v)?;
-                    Some((key, val))
+                    let owned = zbus::zvariant::OwnedValue::try_from(v).ok()?;
+                    Some((key, owned))
                 }).collect()
             }
             _ => HashMap::new(),
         };
 
-        let is_separator = props.get("type").map(|t| t == "separator").unwrap_or(false);
-        let label        = props.get("label").cloned().unwrap_or_default()
+        // Helper: extract string-ish value from the property dict.
+        let prop_str = |k: &str| -> Option<String> {
+            let v = props.get(k)?;
+            string_from_value(&**v)
+        };
+
+        let is_separator = prop_str("type").map(|t| t == "separator").unwrap_or(false);
+        let label        = prop_str("label").unwrap_or_default()
                                .replace('_', ""); // strip mnemonic underscores
-        let enabled      = props.get("enabled").map(|v| v != "false").unwrap_or(true);
-        let visible      = props.get("visible").map(|v| v != "false").unwrap_or(true);
+        let enabled      = prop_str("enabled").map(|v| v != "false").unwrap_or(true);
+        let visible      = prop_str("visible").map(|v| v != "false").unwrap_or(true);
+        let icon_name    = prop_str("icon-name").filter(|s| !s.is_empty());
+
+        let toggle_type = match prop_str("toggle-type").as_deref() {
+            Some("checkmark") => ToggleType::Checkmark,
+            Some("radio")     => ToggleType::Radio,
+            _                 => ToggleType::None,
+        };
+        let toggle_state: i32 = prop_str("toggle-state")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(-1);
 
         if !visible { continue; }
 
@@ -1420,7 +1465,10 @@ fn parse_menu_items(children: &[zbus::zvariant::OwnedValue]) -> Vec<MenuItem> {
         };
         let children = parse_menu_items(&children_nested);
 
-        items.push(MenuItem { id, label, enabled, visible, is_separator, children });
+        items.push(MenuItem {
+            id, label, enabled, visible, is_separator,
+            icon_name, toggle_type, toggle_state, children,
+        });
     }
 
     items
@@ -1455,8 +1503,12 @@ fn get_str(
 ) -> Option<String> {
     use zbus::zvariant::Value;
     match &**map.get(key)? {
-        Value::Str(s) => Some(s.to_string()),
-        _             => None,
+        Value::Str(s)   => Some(s.to_string()),
+        Value::Value(v) => match v.as_ref() {
+            Value::Str(s) => Some(s.to_string()),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -1495,17 +1547,12 @@ fn parse_tooltip(
     use zbus::zvariant::Value;
 
     let raw = map.get("ToolTip")?;
-
-    // Unwrap outer variant wrapper if present.
     let inner: &Value = match &**raw {
         Value::Value(v) => v.as_ref(),
         other           => other,
     };
 
-    let st = match inner {
-        Value::Structure(s) => s,
-        _ => return None,
-    };
+    let st = match inner { Value::Structure(s) => s, _ => return None };
     let fields = st.fields();
     // Struct: (s a(iiay) s s) — icon_name, icon_pixmaps, title, body
     if fields.len() < 4 { return None; }
@@ -1517,6 +1564,8 @@ fn parse_tooltip(
     Some((title, body))
 }
 
+/// Parse an `IconPixmap` / `AttentionIconPixmap` / `OverlayIconPixmap` value.
+/// Picks the largest pixmap in the array and converts ARGB32 → RGBA.
 fn parse_icon_pixmap(val: &zbus::zvariant::OwnedValue) -> Option<(u32, u32, Vec<u8>)> {
     use zbus::zvariant::Value;
 
@@ -1546,6 +1595,14 @@ fn parse_icon_pixmap(val: &zbus::zvariant::OwnedValue) -> Option<(u32, u32, Vec<
     }
 
     best
+}
+
+/// Unpack an optional `IconPixmap` value into `(width, height, rgba_bytes)`.
+/// Returns `(0, 0, vec![])` when the value is absent or unparseable.
+fn unpack_pixmap(val: Option<&zbus::zvariant::OwnedValue>) -> (u32, u32, Vec<u8>) {
+    val.and_then(|v| parse_icon_pixmap(v))
+        .map(|(w, h, d)| (w, h, d))
+        .unwrap_or((0, 0, Vec::new()))
 }
 
 fn argb_to_rgba(argb: &[u8]) -> Vec<u8> {
