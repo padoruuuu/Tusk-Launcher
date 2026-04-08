@@ -3,6 +3,15 @@ name = "Tusk-Launcher"
 version = "0.1.0"
 edition = "2024"
 
+# Dev: compile your code unoptimised (fast rebuild), but compile dependencies
+# at opt-level 3 so the app is actually usable while iterating.
+[profile.dev]
+opt-level = 0
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# Release: maximally small & fast binary.
 [profile.release]
 lto = true
 codegen-units = 1
@@ -10,8 +19,8 @@ strip = true
 
 [dependencies]
 serde = { version = "1.0", default-features = false, features = ["derive", "std"] }
-once_cell = "1.19"
-rayon = "1.10"
+# once_cell removed — use std::sync::LazyLock (stable since Rust 1.80)
+
 # Time handling
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "macros", "local-offset", "parsing"] }
 
@@ -19,13 +28,16 @@ time = { version = "0.3", default-features = false, features = ["std", "formatti
 egui = { version = "0.33", default-features = false, features = ["default_fonts"] }
 eframe = { version = "0.33", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
 
-# Image support
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "ico", "bmp", "tiff"] }
+# Image support — bmp/tiff removed: only png/jpg/jpeg/ico/svg are in the icon search paths
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "ico"] }
 
-# SVG support
-resvg = { version = "0.45", default-features = false, features = ["text"] }
+# SVG support — "text" feature removed: app/system icons are path-only SVGs, no <text> elements
+# Add "text" back if you ever see broken icon rendering
+resvg = { version = "0.45", default-features = false }
 
 # SNI (StatusNotifierItem) tray host — D-Bus via zbus with tokio async executor
 zbus  = { version = "4", default-features = false, features = ["tokio"] }
 tokio = { version = "1", default-features = false, features = ["rt", "time", "net", "sync"] }
-futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+
+# futures-util: "sink" removed — only StreamExt / stream combinators are used in sni.rs
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
