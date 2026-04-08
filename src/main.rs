@@ -2,6 +2,7 @@ mod system;
 mod app_launcher;
 mod gui;
 mod sni;
+mod paths;
 
 use std::{
     io::{Read, Write},

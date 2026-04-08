@@ -917,8 +917,8 @@ async fn watch_sni_signals(conn: &Connection, service: &str, items: TrayItems) {
     while let Some((source, result)) = merged.next().await {
         let member: Option<String> = match result {
             Err(_) => None,
-            Ok(m) if source == 2 => Some("PropertiesChanged".to_string()),
-            Ok(m) if source == 3 => Some("LayoutUpdated".to_string()),
+            Ok(_) if source == 2 => Some("PropertiesChanged".to_string()),
+            Ok(_) if source == 3 => Some("LayoutUpdated".to_string()),
             Ok(m)                => m.header().member().map(|n: &zbus::names::MemberName| n.as_str().to_string()),
         };
 

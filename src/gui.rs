@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     error::Error,
-    fs::{read_to_string, create_dir_all, OpenOptions},
+    fs::{read_to_string, OpenOptions},
     io::Write,
     path::PathBuf,
     sync::Arc,
@@ -10,7 +10,6 @@ use std::{
 use time::OffsetDateTime;
 use eframe;
 use serde::{Deserialize, Serialize};
-use xdg;
 use crate::app_launcher::resolve_icon_path;
 
 const DEFAULT_THEME: &str = r#"
@@ -230,10 +229,7 @@ pub enum TimeOrder { MdyHms, YmdHms, DmyHms, }
 
 impl Default for Config {
     fn default() -> Self {
-        let icon_cache_dir = xdg::BaseDirectories::new()
-            .get_config_home()
-            .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string())).join(".config"))
-            .join("tusk-launcher/icons");
+        let icon_cache_dir = crate::paths::config_home().join("tusk-launcher/icons");
 
         Self {
             enable_recent_apps: true,
@@ -314,12 +310,7 @@ impl Theme {
     }
 
     fn try_load() -> Result<Theme, Box<dyn Error>> {
-        let dirs = xdg::BaseDirectories::new();
-        let path = dirs.place_config_file("tusk-launcher/theme.css")?;
-
-        if let Some(parent) = path.parent() {
-            create_dir_all(parent)?;
-        }
+        let path = crate::paths::place_config_file("tusk-launcher/theme.css")?;
 
         if !path.exists() {
             let mut file = OpenOptions::new().write(true).create(true).open(&path)?;

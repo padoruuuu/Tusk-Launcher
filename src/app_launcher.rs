@@ -13,7 +13,6 @@ use once_cell::sync::Lazy;
 use eframe::egui;
 use image;
 use resvg::{tiny_skia::Pixmap, usvg};
-use xdg::BaseDirectories;
 use serde::{Serialize, Deserialize};
 
 // ============================================================================
@@ -109,10 +108,7 @@ impl App {
 // ============================================================================
 
 static CACHE_FILE: Lazy<PathBuf> = Lazy::new(|| {
-    let config_home = BaseDirectories::new()
-        .get_config_home()
-        .unwrap_or_else(|| PathBuf::from("."));
-    let path = config_home.join("tusk-launcher");
+    let path = crate::paths::config_home().join("tusk-launcher");
     fs::create_dir_all(&path).ok();
     path.join("app_cache.txt")
 });
@@ -440,22 +436,18 @@ fn find_system_icon(icon_name: &str) -> Option<String> {
 }
 
 fn get_icon_search_paths() -> Vec<PathBuf> {
-    let xdg  = BaseDirectories::new();
-    let mut paths = Vec::new();
-
-    if let Some(data_home) = xdg.get_data_home() {
-        paths.push(data_home.join("icons"));
-        paths.push(data_home.join("flatpak/exports/share/icons"));
-    }
-    paths.extend(xdg.get_data_dirs().into_iter().flat_map(|dir| {
+    let data_home = crate::paths::data_home();
+    let mut paths = vec![
+        data_home.join("icons"),
+        data_home.join("flatpak/exports/share/icons"),
+    ];
+    paths.extend(crate::paths::data_dirs().into_iter().flat_map(|dir| {
         [dir.join("icons"), dir.join("pixmaps")]
     }));
     paths.push(PathBuf::from("/usr/share/pixmaps"));
     paths.push(PathBuf::from("/var/lib/flatpak/exports/share/icons"));
-    if let Ok(home) = std::env::var("HOME") {
-        let p = PathBuf::from(&home).join(".local/share/icons/hicolor");
-        if p.exists() { paths.push(p); }
-    }
+    let hicolor = data_home.join("icons/hicolor");
+    if hicolor.exists() { paths.push(hicolor); }
     paths
 }
 
@@ -501,14 +493,12 @@ fn parse_desktop_entry(path: &Path) -> Option<(String, String, String)> {
 }
 
 fn get_desktop_entries() -> Vec<(String, String, String)> {
-    let xdg = BaseDirectories::new();
-    let mut app_dirs = xdg.get_data_dirs().into_iter()
+    let data_home = crate::paths::data_home();
+    let mut app_dirs: Vec<PathBuf> = crate::paths::data_dirs().into_iter()
         .map(|d| d.join("applications"))
-        .collect::<Vec<_>>();
-    if let Some(data_home) = xdg.get_data_home() {
-        app_dirs.push(data_home.join("applications"));
-        app_dirs.push(data_home.join("flatpak/exports/share/applications"));
-    }
+        .collect();
+    app_dirs.push(data_home.join("applications"));
+    app_dirs.push(data_home.join("flatpak/exports/share/applications"));
     app_dirs.into_iter()
         .filter_map(|dir| fs::read_dir(dir).ok())
         .flatten()
