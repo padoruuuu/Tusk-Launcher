@@ -317,36 +317,7 @@ impl Theme {
             file.write_all(DEFAULT_THEME.as_bytes())?;
         }
 
-        let mut content = read_to_string(&path)?;
-
-        // Migration: overwrite with the current default theme whenever the on-disk file
-        // matches any known old default (detected by sentinel values unique to each old version).
-        let is_old_default =
-            // v1: 200px wide, 0px radius, Nord blue accent
-            (content.contains("width: 200px;") && content.contains("rgba(122, 162, 247, 1)"))
-            // v2: new palette but old power-button hover (violet accent on power)
-            || (content.contains("rgba(110, 90, 220, 1)") && content.contains(".power-button"));
-        if is_old_default {
-            content = DEFAULT_THEME.to_string();
-            if let Ok(mut f) = OpenOptions::new().write(true).truncate(true).open(&path) {
-                let _ = f.write_all(content.as_bytes());
-            }
-        } else {
-            // Targeted migration: replace opaque tray-icon background with transparent.
-            let old_tray_bg = "background-color: rgba(46, 52, 64, 1);";
-            if content.contains(".tray-icon") && content.contains(old_tray_bg) {
-                if let Some(tray_pos) = content.find(".tray-icon") {
-                    if let Some(rel) = content[tray_pos..].find(old_tray_bg) {
-                        let abs = tray_pos + rel;
-                        content.replace_range(abs..abs + old_tray_bg.len(),
-                            "background-color: rgba(0, 0, 0, 0);");
-                        if let Ok(mut f) = OpenOptions::new().write(true).truncate(true).open(&path) {
-                            let _ = f.write_all(content.as_bytes());
-                        }
-                    }
-                }
-            }
-        }
+        let content = read_to_string(&path)?;
 
         Ok(Self::parse_css(&content))
     }

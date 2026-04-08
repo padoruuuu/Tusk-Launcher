@@ -4,12 +4,10 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     str::FromStr,
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
     thread,
     time,
 };
-
-use once_cell::sync::Lazy;
 use eframe::egui;
 use image;
 use resvg::{tiny_skia::Pixmap, usvg};
@@ -107,17 +105,17 @@ impl App {
 // Cache management
 // ============================================================================
 
-static CACHE_FILE: Lazy<PathBuf> = Lazy::new(|| {
+static CACHE_FILE: LazyLock<PathBuf> = LazyLock::new(|| {
     let path = crate::paths::config_home().join("tusk-launcher");
     fs::create_dir_all(&path).ok();
     path.join("app_cache.txt")
 });
 
-pub static APP_CACHE: Lazy<Mutex<AppCache>> = Lazy::new(|| {
+pub static APP_CACHE: LazyLock<Mutex<AppCache>> = LazyLock::new(|| {
     let cache = CACHE_FILE.exists()
         .then(|| fs::read_to_string(&*CACHE_FILE).ok())
         .flatten()
-        .and_then(|s| deserialize_cache(&s).ok())
+        .and_then(|s: String| deserialize_cache(&s).ok())
         .unwrap_or_default();
     Mutex::new(cache)
 });
@@ -261,7 +259,7 @@ pub fn get_launch_options() -> HashMap<String, AppLaunchOptions> {
     APP_CACHE.lock()
         .ok()
         .map(|c| c.apps.iter()
-            .filter_map(|(name, entry)| entry.launch_options.clone().map(|opts| (name.clone(), opts)))
+            .filter_map(|(name, entry): &(String, AppEntry)| entry.launch_options.clone().map(|opts| (name.clone(), opts)))
             .collect()
         )
         .unwrap_or_default()
@@ -302,7 +300,7 @@ fn get_all_cached_apps() -> Vec<App> {
         .ok()
         .map(|cache| {
             cache.apps.iter()
-                .filter_map(|(name, entry)| {
+                .filter_map(|(name, entry): &(String, AppEntry)| {
                     let exec = entry.exec_command.as_ref()?;
                     let icon = entry.icon_path.as_deref().unwrap_or("").to_string();
                     Some(App::new(name.clone(), exec.clone(), icon))
@@ -635,7 +633,7 @@ fn get_recent_indices(apps: &[App], config: &crate::gui::Config) -> Vec<usize> {
         .ok()
         .map(|cache| {
             cache.apps.iter()
-                .filter_map(|(name, _)| name_to_idx.get(name.as_str()).copied())
+                .filter_map(|(name, _): &(String, AppEntry)| name_to_idx.get(name.as_str()).copied())
                 .take(config.max_search_results)
                 .collect()
         })
