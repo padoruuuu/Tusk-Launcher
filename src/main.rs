@@ -3,6 +3,7 @@ mod app_launcher;
 mod gui;
 mod sni;
 mod paths;
+mod svg;
 
 use std::{
     io::{Read, Write},

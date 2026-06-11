@@ -5,8 +5,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use time::OffsetDateTime;
-use crate::gui::{Config, format_datetime};
+use crate::gui::{Config, format_datetime, LocalTime};
 
 // ============================================================================
 // Shared Helpers
@@ -41,10 +40,7 @@ fn try_commands(commands: &[String]) -> bool {
 // ============================================================================
 
 pub fn get_current_time(config: &Config) -> String {
-    format_datetime(
-        &OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc()),
-        config,
-    )
+    format_datetime(&LocalTime::now(), config)
 }
 
 // ============================================================================

@@ -9,8 +9,7 @@ use std::{
     time,
 };
 use eframe::egui;
-use image;
-use resvg::{tiny_skia::Pixmap, usvg};
+
 use serde::{Serialize, Deserialize};
 
 // ============================================================================
@@ -100,6 +99,8 @@ impl App {
         App { name, name_lower, exec, icon }
     }
 }
+
+const ICON_EXTS: &[&str] = &["png", "svg", "jpg", "jpeg", "ico"];
 
 // ============================================================================
 // Cache management
@@ -342,28 +343,63 @@ impl IconManager {
     }
 
     fn load_image(path: &str) -> Result<egui::ColorImage, Box<dyn std::error::Error>> {
-        if path.to_lowercase().ends_with(".svg") {
-            let tree = usvg::Tree::from_data(&fs::read(path)?, &usvg::Options::default())?;
-            let size = tree.size().to_int_size();
-            let mut pixmap = Pixmap::new(size.width(), size.height())
-                .ok_or("Failed to create pixmap")?;
-            resvg::render(&tree, usvg::Transform::default(), &mut pixmap.as_mut());
-            Ok(egui::ColorImage::from_rgba_unmultiplied(
-                [size.width() as usize, size.height() as usize],
-                pixmap.data(),
-            ))
-        } else {
-            let img = image::open(path)?.into_rgba8();
-            Ok(egui::ColorImage::from_rgba_unmultiplied(
-                [img.width() as usize, img.height() as usize],
-                &img,
-            ))
+        let lower = path.to_lowercase();
+        if lower.ends_with(".svg") {
+            let (rgba, w, h) = crate::svg::rasterize(&fs::read(path)?, 32)?;
+            return Ok(egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba));
         }
+        if lower.ends_with(".png") { return load_png(path); }
+        if lower.ends_with(".jpg") || lower.ends_with(".jpeg") { return load_jpeg(path); }
+        if lower.ends_with(".ico") {
+            if let Ok(img) = load_ico(path) { return Ok(img); }
+            if let Ok(img) = load_png(path) { return Ok(img); }
+        }
+        Err(format!("unsupported image format: {path}").into())
     }
 
     fn create_placeholder() -> egui::ColorImage {
         egui::ColorImage::from_rgba_unmultiplied([16, 16], &[127u8; 16 * 16 * 4])
     }
+}
+
+// ── per-format image decoders (replace the `image` crate) ───────────────────
+
+fn load_png(path: &str) -> Result<egui::ColorImage, Box<dyn std::error::Error>> {
+    // png 0.18: Decoder requires BufRead + Seek; output_buffer_size() returns Option<usize>
+    let file    = std::io::BufReader::new(std::fs::File::open(path)?);
+    let decoder = png::Decoder::new(file);
+    let mut reader = decoder.read_info()?;
+    let mut buf = vec![0u8; reader.output_buffer_size().unwrap_or(0)];
+    let info = reader.next_frame(&mut buf)?;
+    let (w, h) = (info.width as usize, info.height as usize);
+    let src = &buf[..info.buffer_size()];
+    let rgba: Vec<u8> = match info.color_type {
+        png::ColorType::Rgba          => src.to_vec(),
+        png::ColorType::Rgb           => src.chunks(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
+        png::ColorType::GrayscaleAlpha=> src.chunks(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
+        png::ColorType::Grayscale     => src.iter().flat_map(|&v|  [v,    v,    v,    255 ]).collect(),
+        png::ColorType::Indexed       => return Err("indexed PNG not supported".into()),
+    };
+    Ok(egui::ColorImage::from_rgba_unmultiplied([w, h], &rgba))
+}
+
+fn load_jpeg(path: &str) -> Result<egui::ColorImage, Box<dyn std::error::Error>> {
+    use image::GenericImageView;
+    let img = image::open(path)?;
+    let (w, h) = img.dimensions();
+    let rgba = img.into_rgba8().into_raw();
+    Ok(egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba))
+}
+
+fn load_ico(path: &str) -> Result<egui::ColorImage, Box<dyn std::error::Error>> {
+    let file  = std::fs::File::open(path)?;
+    let icon  = ico::IconDir::read(file)?;
+    // Pick the largest entry.
+    let entry = icon.entries().iter().max_by_key(|e| e.width() as u32 * e.height() as u32)
+        .ok_or("empty ICO")?;
+    let img   = entry.decode()?;
+    let (w, h) = (img.width() as usize, img.height() as usize);
+    Ok(egui::ColorImage::from_rgba_unmultiplied([w, h], img.rgba_data()))
 }
 
 pub fn resolve_icon_path(app_name: &str, icon_name: &str, config: &crate::gui::Config) -> Option<String> {
@@ -406,31 +442,49 @@ fn find_steam_icon(appid: &str) -> Option<String> {
 }
 
 fn find_icon_in_directory(dir: &str) -> Option<String> {
-    const EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "svg", "ico"];
     fs::read_dir(dir).ok()?
         .filter_map(Result::ok)
         .find(|entry| {
             entry.path().extension()
                 .and_then(|ext| ext.to_str())
-                .map(|ext| EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+                .map(|ext| ICON_EXTS.contains(&ext.to_lowercase().as_str()))
                 .unwrap_or(false)
         })
         .and_then(|entry| entry.path().to_str().map(String::from))
 }
 
 fn find_system_icon(icon_name: &str) -> Option<String> {
-    const THEMES:      &[&str] = &["hicolor", "Adwaita", "gnome", "breeze", "oxygen"];
-    const SIZES:       &[&str] = &["512x512", "256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "16x16", "scalable"];
-    const CATEGORIES:  &[&str] = &["apps", "devices", "places", "mimetypes", "status", "actions"];
-    const EXTENSIONS:  &[&str] = &["png", "svg", "xpm", "jpg", "jpeg", "ico"];
+    const THEMES:     &[&str] = &["hicolor", "Adwaita", "gnome", "breeze", "oxygen"];
+    const SIZES:      &[&str] = &["512x512", "256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "16x16", "scalable"];
+    const CATEGORIES: &[&str] = &["apps", "devices", "places", "mimetypes", "status", "actions"];
 
-    get_icon_search_paths().iter()
+    let base_paths = get_icon_search_paths();
+
+    // Pass 1: structured icon-theme layout  (base/theme/size/category/name.ext)
+    let themed = base_paths.iter()
         .flat_map(|base| THEMES.iter().map(move |theme| base.join(theme)))
-        .flat_map(|theme_path| SIZES.iter().map(move |size| theme_path.join(size)))
-        .flat_map(|size_path| CATEGORIES.iter().map(move |cat| size_path.join(cat)))
-        .flat_map(|cat_path| EXTENSIONS.iter().map(move |ext| cat_path.join(format!("{}.{}", icon_name, ext))))
-        .find(|path| path.exists())
-        .and_then(|path| path.to_str().map(String::from))
+        .flat_map(|tp| SIZES.iter().map(move |sz| tp.join(sz)))
+        .flat_map(|sp| CATEGORIES.iter().map(move |cat| sp.join(cat)))
+        .flat_map(|cp| ICON_EXTS.iter().map(move |ext| cp.join(format!("{}.{}", icon_name, ext))))
+        .find(|p| p.exists());
+
+    if let Some(p) = themed { return p.to_str().map(String::from); }
+
+    // Pass 2: flat directories — pixmaps layout is name.ext directly in the folder,
+    // NOT theme/size/category/name.ext. Many distros ship icons here.
+    let data_home = crate::paths::data_home();
+    let flat_dirs: Vec<PathBuf> = [
+        PathBuf::from("/usr/share/pixmaps"),
+        PathBuf::from("/usr/local/share/pixmaps"),
+    ].into_iter()
+        .chain(crate::paths::data_dirs().into_iter().map(|d| d.join("pixmaps")))
+        .chain(std::iter::once(data_home.join("icons")))
+        .collect();
+
+    flat_dirs.iter()
+        .flat_map(|dir| ICON_EXTS.iter().map(move |ext| dir.join(format!("{}.{}", icon_name, ext))))
+        .find(|p| p.exists())
+        .and_then(|p| p.to_str().map(String::from))
 }
 
 fn get_icon_search_paths() -> Vec<PathBuf> {
@@ -475,17 +529,23 @@ fn parse_desktop_entry(path: &Path) -> Option<(String, String, String)> {
 
     let mut exec = exec?;
 
-    for placeholder in ["%f", "%F", "%u", "%U", "%c", "%k", "@@"] {
+    // Strip all field codes per FreeDesktop Desktop Entry Specification §7.
+    // File/URL codes are removed — we launch without file arguments.
+    // Deprecated codes (%d %D %n %N %v %m) are removed per spec.
+    for placeholder in ["%f", "%F", "%u", "%U", "%c", "%k",
+                         "%d", "%D", "%n", "%N", "%v", "%m", "@@"] {
         exec = exec.replace(placeholder, "");
     }
+    // %i expands to "--icon <name>" per spec; remove entirely if no icon.
     if let Some(icon_val) = &icon {
         exec = exec.replace("%i", &format!("--icon {}", icon_val));
+    } else {
+        exec = exec.replace("%i", "");
     }
-    if let Some(class) = wm_class {
-        if !exec.contains("flatpak run") {
-            exec.push_str(&format!(" --class {}", class));
-        }
-    }
+    // StartupWMClass is a window-manager hint for taskbar matching.
+    // It must NOT be passed as --class to the executable — apps like
+    // Blender and EasyEffects do not accept that flag and exit silently.
+    let _ = wm_class; // suppress unused-variable warning
 
     Some((name?, exec.trim().to_string(), icon.unwrap_or_default()))
 }
@@ -588,17 +648,14 @@ fn determine_steam_icon_path(manifest_path: &PathBuf, appid: &str, installdir: &
 }
 
 fn has_icon_files(dir: &PathBuf) -> bool {
-    const EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "svg", "ico"];
     fs::read_dir(dir)
         .ok()
-        .map(|entries| {
-            entries.filter_map(Result::ok).any(|entry| {
-                entry.path().extension()
-                    .and_then(|ext| ext.to_str())
-                    .map(|ext| EXTENSIONS.contains(&ext.to_lowercase().as_str()))
-                    .unwrap_or(false)
-            })
-        })
+        .map(|entries| entries.filter_map(Result::ok).any(|entry| {
+            entry.path().extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ICON_EXTS.contains(&ext.to_lowercase().as_str()))
+                .unwrap_or(false)
+        }))
         .unwrap_or(false)
 }
 

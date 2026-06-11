@@ -7,25 +7,63 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use time::OffsetDateTime;
 use eframe;
 use serde::{Deserialize, Serialize};
 use crate::app_launcher::resolve_icon_path;
 
+/// Local wall-clock time — replaces `time::OffsetDateTime` with zero extra deps.
+/// Populated via `libc::localtime_r`, which is always available on Linux
+/// (libc is already a transitive dep via zbus → nix → libc).
+pub struct LocalTime {
+    pub year:  i32,
+    pub month: u8,   // 1–12
+    pub day:   u8,
+    pub hour:  u8,
+    pub min:   u8,
+    pub sec:   u8,
+}
+
+impl LocalTime {
+    pub fn now() -> Self {
+        #[cfg(unix)]
+        unsafe {
+            let mut t: libc::time_t = 0;
+            libc::time(&mut t);
+            let mut tm: libc::tm = std::mem::zeroed();
+            libc::localtime_r(&t, &mut tm);
+            Self {
+                year:  (tm.tm_year + 1900),
+                month: (tm.tm_mon + 1) as u8,
+                day:   tm.tm_mday as u8,
+                hour:  tm.tm_hour as u8,
+                min:   tm.tm_min as u8,
+                sec:   tm.tm_sec as u8,
+            }
+        }
+        #[cfg(not(unix))]
+        Self { year: 2024, month: 1, day: 1, hour: 0, min: 0, sec: 0 }
+    }
+}
+
 const DEFAULT_THEME: &str = r#"
 /* ═══════════════════════════════════════════════════════
    Tusk Launcher — Default Theme
-   Palette:
-     bg-base    rgba(12,  12,  18,  0.96)  near-black
-     bg-surface rgba(24,  24,  36,  1)     card surface
-     bg-raised  rgba(36,  36,  52,  1)     elevated / inputs
-     bg-hover   rgba(52,  52,  74,  1)     hover state
-     accent     rgba(110, 90,  220, 1)     soft violet
-     accent-hi  rgba(135, 115, 245, 1)     accent hover
-     text       rgba(218, 216, 232, 1)     primary text
-     text-dim   rgba(120, 118, 140, 1)     secondary text
-     green      rgba(72,  210, 140, 1)     status indicator
+   Define your palette here; reference it with var(--name).
+   Hover states use standard :selector:hover { } blocks.
    ═══════════════════════════════════════════════════════ */
+
+:root {
+    --bg-base:     rgba(12,  12,  18,  0.96);
+    --bg-raised:   rgba(36,  36,  52,  1);
+    --bg-hover:    rgba(52,  52,  74,  1);
+    --accent:      rgba(110, 90,  220, 1);
+    --accent-hi:   rgba(135, 115, 245, 1);
+    --text:        rgba(218, 216, 232, 1);
+    --text-bright: rgba(235, 233, 250, 1);
+    --text-dim:    rgba(120, 118, 140, 1);
+    --green:       rgba(72,  210, 140, 1);
+    --transparent: rgba(0,   0,   0,   0);
+}
 
 /* Main Window
  * Layout (px):
@@ -35,7 +73,7 @@ const DEFAULT_THEME: &str = r#"
  *   time/vol    top:196 h:16  → ends:212
  *   power       top:216 h:20  → ends:236  */
 .main-window {
-    background-color: rgba(12, 12, 18, 0.96);
+    background-color: var(--bg-base);
     width: 220px;
     height: 242px;
     background-image: url("");
@@ -50,13 +88,14 @@ const DEFAULT_THEME: &str = r#"
     top: 10px;
     width: 196px;
     height: 26px;
-    background-color: rgba(36, 36, 52, 1);
-    background-color-hover: rgba(48, 48, 68, 1);
+    background-color: var(--bg-raised);
     border-radius: 8px;
-    color: rgba(218, 216, 232, 1);
-    color-hover: rgba(218, 216, 232, 1);
+    color: var(--text);
     padding: 0px;
     font-size: 12px;
+}
+.search-bar:hover {
+    background-color: rgba(48, 48, 68, 1);
 }
 
 /* App List Container */
@@ -66,21 +105,23 @@ const DEFAULT_THEME: &str = r#"
     top: 40px;
     width: 196px;
     height: 130px;
-    background-color: rgba(0, 0, 0, 0);
+    background-color: var(--transparent);
     padding: 0px;
     border-radius: 0px;
 }
 
 /* App Button */
 .app-button {
-    background-color: rgba(36, 36, 52, 1);
-    background-color-hover: rgba(52, 52, 74, 1);
-    color: rgba(218, 216, 232, 1);
-    color-hover: rgba(235, 233, 250, 1);
+    background-color: var(--bg-raised);
+    color: var(--text);
     border-radius: 6px;
     padding: 0px;
     font-size: 12px;
     order: 2;
+}
+.app-button:hover {
+    background-color: var(--bg-hover);
+    color: var(--text-bright);
 }
 
 /* App Icon */
@@ -94,12 +135,14 @@ const DEFAULT_THEME: &str = r#"
 .settings-button {
     width: 20px;
     height: 20px;
-    color: rgba(120, 118, 140, 1);
-    color-hover: rgba(135, 115, 245, 1);
+    color: var(--text-dim);
     font-size: 14px;
     offset-x: 10px;
     offset-y: -2px;
     order: 0;
+}
+.settings-button:hover {
+    color: var(--accent-hi);
 }
 
 /* System Tray Strip */
@@ -109,9 +152,9 @@ const DEFAULT_THEME: &str = r#"
     top: 174px;
     width: 196px;
     height: 18px;
-    background-color: rgba(0, 0, 0, 0);
-    color: rgba(218, 216, 232, 1);
-    indicator-color: rgba(72, 210, 140, 1);
+    background-color: var(--transparent);
+    color: var(--text);
+    indicator-color: var(--green);
     font-size: 10px;
     border-radius: 0px;
     text-align: left;
@@ -124,9 +167,8 @@ const DEFAULT_THEME: &str = r#"
     top: 196px;
     width: 196px;
     height: 16px;
-    background-color: rgba(0, 0, 0, 0);
-    color: rgba(120, 118, 140, 1);
-    color-hover: rgba(120, 118, 140, 1);
+    background-color: var(--transparent);
+    color: var(--text-dim);
     text-align: center;
 }
 
@@ -137,12 +179,13 @@ const DEFAULT_THEME: &str = r#"
     top: 196px;
     width: 196px;
     height: 16px;
-    background-color: rgba(36, 36, 52, 1);
-    background-color-hover: rgba(52, 52, 74, 1);
-    color: rgba(218, 216, 232, 1);
-    color-hover: rgba(218, 216, 232, 1);
+    background-color: var(--bg-raised);
+    color: var(--text);
     border-radius: 6px;
     gap: 5px;
+}
+.volume-slider:hover {
+    background-color: var(--bg-hover);
 }
 
 /* Power / Restart / Logout Buttons */
@@ -152,30 +195,33 @@ const DEFAULT_THEME: &str = r#"
     top: 216px;
     width: 196px;
     height: 20px;
-    background-color: rgba(36, 36, 52, 1);
-    background-color-hover: rgba(52, 52, 74, 1);
-    color: rgba(218, 216, 232, 1);
-    color-hover: rgba(235, 233, 250, 1);
+    background-color: var(--bg-raised);
+    color: var(--text);
     border-radius: 6px;
     padding: 0px;
+}
+.power-button:hover {
+    background-color: var(--bg-hover);
+    color: var(--text-bright);
 }
 
 /* Edit / Save / Cancel (env-vars popup) */
 .edit-button {
-    background-color: rgba(110, 90, 220, 1);
-    background-color-hover: rgba(135, 115, 245, 1);
-    color: rgba(218, 216, 232, 1);
-    color-hover: rgba(255, 255, 255, 1);
+    background-color: var(--accent);
+    color: var(--text);
     border-radius: 6px;
     padding: 0px;
     font-size: 12px;
 }
+.edit-button:hover {
+    background-color: var(--accent-hi);
+    color: white;
+}
 
 /* Env-Vars Input Field */
 .env-input {
-    background-color: rgba(36, 36, 52, 1);
-    color: rgba(218, 216, 232, 1);
-    color-hover: rgba(218, 216, 232, 1);
+    background-color: var(--bg-raised);
+    color: var(--text);
     padding: 0px;
     font-size: 12px;
     border-radius: 6px;
@@ -230,7 +276,6 @@ pub enum TimeOrder { MdyHms, YmdHms, DmyHms, }
 impl Default for Config {
     fn default() -> Self {
         let icon_cache_dir = crate::paths::config_home().join("tusk-launcher/icons");
-
         Self {
             enable_recent_apps: true,
             max_search_results: 5,
@@ -243,7 +288,12 @@ impl Default for Config {
             volume_update_interval_ms: 500,
             power_commands: vec!["systemctl poweroff".into(), "loginctl poweroff".into(), "poweroff".into(), "halt".into()],
             restart_commands: vec!["systemctl reboot".into(), "loginctl reboot".into(), "reboot".into()],
-            logout_commands: vec!["loginctl terminate-session $XDG_SESSION_ID".into(), "hyprctl dispatch exit".into(), "swaymsg exit".into(), "gnome-session-quit --logout --no-prompt".into(), "qdbus org.kde.ksmserver /KSMServer logout 0 0 0".into()],
+            logout_commands: vec![
+                "loginctl terminate-session $XDG_SESSION_ID".into(),
+                "hyprctl dispatch exit".into(), "swaymsg exit".into(),
+                "gnome-session-quit --logout --no-prompt".into(),
+                "qdbus org.kde.ksmserver /KSMServer logout 0 0 0".into(),
+            ],
             enable_icons: true,
             icon_cache_dir,
             show_settings_button: true,
@@ -252,136 +302,226 @@ impl Default for Config {
     }
 }
 
-pub fn format_datetime(datetime: &OffsetDateTime, config: &Config) -> String {
-    use time::macros::format_description;
-
+pub fn format_datetime(t: &LocalTime, config: &Config) -> String {
     let date_str = match config.time_order {
-        TimeOrder::MdyHms => {
-            let format = format_description!("[month]/[day]/[year]");
-            datetime.format(&format).unwrap_or_default()
-        }
-        TimeOrder::YmdHms => {
-            let format = format_description!("[year]/[month]/[day]");
-            datetime.format(&format).unwrap_or_default()
-        }
-        TimeOrder::DmyHms => {
-            let format = format_description!("[day]/[month]/[year]");
-            datetime.format(&format).unwrap_or_default()
-        }
+        TimeOrder::MdyHms => format!("{:02}/{:02}/{}", t.month, t.day, t.year),
+        TimeOrder::YmdHms => format!("{}/{:02}/{:02}", t.year, t.month, t.day),
+        TimeOrder::DmyHms => format!("{:02}/{:02}/{}", t.day, t.month, t.year),
     };
-
-    let time_str = format_time_with_chrono_format(datetime, &config.time_format);
+    let time_str = format_time_fields(t.hour, t.min, t.sec, &config.time_format);
     format!("{} {}", time_str, date_str)
 }
 
-fn format_time_with_chrono_format(dt: &OffsetDateTime, format_str: &str) -> String {
-    format_str
-        .replace("%I", &format!("{:02}", dt.hour() % 12))
-        .replace("%H", &format!("{:02}", dt.hour()))
-        .replace("%M", &format!("{:02}", dt.minute()))
-        .replace("%S", &format!("{:02}", dt.second()))
-        .replace("%p", if dt.hour() < 12 { "AM" } else { "PM" })
-        .replace("%P", if dt.hour() < 12 { "am" } else { "pm" })
+fn format_time_fields(hour: u8, min: u8, sec: u8, fmt: &str) -> String {
+    fmt
+        .replace("%I", &format!("{:02}", if hour % 12 == 0 { 12 } else { hour % 12 }))
+        .replace("%H", &format!("{:02}", hour))
+        .replace("%M", &format!("{:02}", min))
+        .replace("%S", &format!("{:02}", sec))
+        .replace("%p", if hour < 12 { "AM" } else { "PM" })
+        .replace("%P", if hour < 12 { "am" } else { "pm" })
 }
 
 // ============================================================================
 // Theme
 // ============================================================================
 
-pub struct Theme {
-    styles: HashMap<String, HashMap<String, String>>,
+/// Strip `/* ... */` block comments from CSS source.
+fn strip_comments(css: &str) -> String {
+    let mut out = String::with_capacity(css.len());
+    let mut chars = css.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            while let Some(c) = chars.next() {
+                if c == '*' && chars.peek() == Some(&'/') { chars.next(); break; }
+            }
+        } else { out.push(c); }
+    }
+    out
 }
 
-impl Clone for Theme {
-    fn clone(&self) -> Self {
-        Theme { styles: self.styles.clone() }
+/// Normalise property names — accept common aliases so old themes written
+/// with `x`/`y`, `text-color`, `hover-*` prefixes still work.
+fn normalize_prop(key: &str) -> &str {
+    match key {
+        "x"                      => "left",
+        "y"                      => "top",
+        "x-offset"               => "offset-x",
+        "y-offset"               => "offset-y",
+        "text-color"             => "color",
+        "hover-text-color"       => "color-hover",
+        "hover-background-color" => "background-color-hover",
+        other                    => other,
     }
+}
+
+/// Strip surrounding quotes / `url(...)` wrapper from a raw CSS value.
+fn clean_value(s: &str) -> String {
+    let s = s.trim();
+    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
+        return s[1..s.len()-1].to_string();
+    }
+    if let Some(inner) = s.strip_prefix("url(").and_then(|t| t.strip_suffix(')')) {
+        return inner.trim().trim_matches(|c| c == '"' || c == '\'').to_string();
+    }
+    s.to_string()
+}
+
+/// Replace every `var(--name)` in `val` with the corresponding entry from `vars`.
+/// Handles up to 8 levels of chaining (e.g. `--a: var(--b); --b: red`).
+fn resolve_vars(val: &str, vars: &HashMap<String, String>) -> String {
+    if !val.contains("var(") { return val.to_string(); }
+    let mut result = val.to_string();
+    for _ in 0..8 {
+        if !result.contains("var(") { break; }
+        let mut next = String::with_capacity(result.len());
+        let mut rest = result.as_str();
+        while let Some(start) = rest.find("var(--") {
+            next.push_str(&rest[..start]);
+            let after = start + 4; // skip "var("
+            match rest[after..].find(')') {
+                Some(end) => {
+                    let name = &rest[after..after + end];
+                    match vars.get(name) {
+                        Some(v) => next.push_str(v),
+                        None    => next.push_str(&rest[start..after + end + 1]),
+                    }
+                    rest = &rest[after + end + 1..];
+                }
+                None => { next.push_str(&rest[start..]); rest = ""; }
+            }
+        }
+        next.push_str(rest);
+        if next == result { break; }
+        result = next;
+    }
+    result
+}
+
+/// HSL (all components 0..1) → (r, g, b) bytes.
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
+    fn hue(p: f32, q: f32, mut t: f32) -> f32 {
+        if t < 0.0 { t += 1.0; } else if t > 1.0 { t -= 1.0; }
+        if t < 1.0/6.0 { return p + (q-p)*6.0*t; }
+        if t < 0.5     { return q; }
+        if t < 2.0/3.0 { return p + (q-p)*(2.0/3.0-t)*6.0; }
+        p
+    }
+    if s == 0.0 { let v = (l*255.0).round() as u8; return (v, v, v); }
+    let q = if l < 0.5 { l*(1.0+s) } else { l+s-l*s };
+    let p = 2.0*l - q;
+    (
+        (hue(p, q, h+1.0/3.0)*255.0).round() as u8,
+        (hue(p, q, h        )*255.0).round() as u8,
+        (hue(p, q, h-1.0/3.0)*255.0).round() as u8,
+    )
+}
+
+/// CSS named colours (UI-relevant subset).
+fn css_named_color(s: &str) -> Option<eframe::egui::Color32> {
+    use eframe::egui::Color32;
+    Some(match s {
+        "black"                   => Color32::BLACK,
+        "white"                   => Color32::WHITE,
+        "transparent"             => Color32::TRANSPARENT,
+        "red"                     => Color32::from_rgb(255,   0,   0),
+        "green"                   => Color32::from_rgb(  0, 128,   0),
+        "lime"                    => Color32::from_rgb(  0, 255,   0),
+        "blue"                    => Color32::from_rgb(  0,   0, 255),
+        "yellow"                  => Color32::from_rgb(255, 255,   0),
+        "cyan"  | "aqua"          => Color32::from_rgb(  0, 255, 255),
+        "magenta" | "fuchsia"     => Color32::from_rgb(255,   0, 255),
+        "orange"                  => Color32::from_rgb(255, 165,   0),
+        "purple"                  => Color32::from_rgb(128,   0, 128),
+        "pink"                    => Color32::from_rgb(255, 192, 203),
+        "gray"  | "grey"          => Color32::from_rgb(128, 128, 128),
+        "darkgray"  | "darkgrey"  => Color32::from_rgb(169, 169, 169),
+        "lightgray" | "lightgrey" => Color32::from_rgb(211, 211, 211),
+        "silver"                  => Color32::from_rgb(192, 192, 192),
+        "navy"                    => Color32::from_rgb(  0,   0, 128),
+        "teal"                    => Color32::from_rgb(  0, 128, 128),
+        "maroon"                  => Color32::from_rgb(128,   0,   0),
+        "olive"                   => Color32::from_rgb(128, 128,   0),
+        _                         => return None,
+    })
+}
+
+#[derive(Clone)]
+pub struct Theme {
+    styles: HashMap<String, HashMap<String, String>>,
 }
 
 impl Theme {
     pub fn load_or_create() -> Theme {
         match Self::try_load() {
-            Ok(theme) => theme,
-            Err(e) => {
-                eprintln!("Failed to load theme: {}", e);
-                Self::parse_css(DEFAULT_THEME)
-            }
+            Ok(t)  => t,
+            Err(e) => { eprintln!("Failed to load theme: {}", e); Self::parse_css(DEFAULT_THEME) }
         }
     }
 
     fn try_load() -> Result<Theme, Box<dyn Error>> {
         let path = crate::paths::place_config_file("tusk-launcher/theme.css")?;
-
         if !path.exists() {
-            let mut file = OpenOptions::new().write(true).create(true).open(&path)?;
-            file.write_all(DEFAULT_THEME.as_bytes())?;
+            OpenOptions::new().write(true).create(true).open(&path)?.write_all(DEFAULT_THEME.as_bytes())?;
         }
-
-        let content = read_to_string(&path)?;
-
-        Ok(Self::parse_css(&content))
+        Ok(Self::parse_css(&read_to_string(&path)?))
     }
 
     fn parse_css(css: &str) -> Theme {
-        let mut styles = HashMap::new();
+        let cleaned = strip_comments(css);
 
-        // Remove comments
-        let mut cleaned = String::with_capacity(css.len());
-        let mut chars = css.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '/' && chars.peek() == Some(&'*') {
-                chars.next();
-                while let Some(c) = chars.next() {
-                    if c == '*' && chars.peek() == Some(&'/') {
-                        chars.next();
-                        break;
+        // ── Pass 1: collect CSS custom properties (--name: value) ─────────────
+        // Scoped globally; `:root {}` is the canonical location but any block works.
+        let mut vars: HashMap<String, String> = HashMap::new();
+        {
+            let mut rest = cleaned.as_str();
+            while let Some(open) = rest.find('{') {
+                let inner = open + 1;
+                match rest[inner..].find('}') {
+                    None        => break,
+                    Some(close) => {
+                        for decl in rest[inner..inner+close].split(';') {
+                            if let Some((k, v)) = decl.trim().split_once(':') {
+                                let k = k.trim().to_lowercase();
+                                if k.starts_with("--") { vars.insert(k, clean_value(v)); }
+                            }
+                        }
+                        rest = &rest[inner + close + 1..];
                     }
                 }
-            } else {
-                cleaned.push(c);
             }
         }
 
-        // Parse rules
+        // ── Pass 2: parse rule blocks into class-name → props map ─────────────
+        let mut styles: HashMap<String, HashMap<String, String>> = HashMap::new();
         let mut rest = cleaned.as_str();
-        while let Some(dot_pos) = rest.find('.') {
-            rest = &rest[dot_pos + 1..];
-            let class_end = rest.find(|c: char| c.is_whitespace() || c == '{').unwrap_or(rest.len());
-            if class_end == 0 { break; }
+        while !rest.is_empty() {
+            let Some(open) = rest.find('{') else { break };
+            let selector = rest[..open].trim().to_lowercase();
+            let inner = open + 1;
+            let Some(close) = rest[inner..].find('}') else { break };
+            let block = &rest[inner..inner + close];
+            rest = &rest[inner + close + 1..];
 
-            let class_name = rest[..class_end].trim().to_string();
+            // Skip :root and @-rules (vars already handled above)
+            if selector == ":root" || selector.starts_with('@') { continue; }
 
-            if let Some(open_brace) = rest.find('{') {
-                rest = &rest[open_brace + 1..];
-                if let Some(close_brace) = rest.find('}') {
-                    let block = &rest[..close_brace];
-                    let mut props = HashMap::new();
+            // Strip leading '.' → ".app-button:hover" becomes "app-button:hover"
+            let class = selector.trim_start_matches('.').trim().to_string();
+            if class.is_empty() { continue; }
 
-                    for decl in block.split(';') {
-                        let decl = decl.trim();
-                        if decl.is_empty() { continue; }
-
-                        if let Some((key, val)) = decl.split_once(':') {
-                            let key = key.trim().to_lowercase();
-                            let mut val = val.trim().to_string();
-
-                            if (val.starts_with('"') && val.ends_with('"')) ||
-                               (val.starts_with('\'') && val.ends_with('\'')) {
-                                val = val[1..val.len()-1].to_string();
-                            }
-
-                            if val.starts_with("url(") && val.ends_with(')') {
-                                val = val[4..val.len()-1].trim().trim_matches(|c| c == '"' || c == '\'').to_string();
-                            }
-
-                            props.insert(key, val);
-                        }
-                    }
-
-                    styles.insert(class_name, props);
-                    rest = &rest[close_brace + 1..];
-                } else { break; }
-            } else { break; }
+            let entry = styles.entry(class).or_default();
+            for decl in block.split(';') {
+                let decl = decl.trim();
+                if decl.is_empty() { continue; }
+                if let Some((k, v)) = decl.split_once(':') {
+                    let k = k.trim().to_lowercase();
+                    if k.is_empty() || k.starts_with("--") { continue; }
+                    let v = resolve_vars(&clean_value(v), &vars);
+                    entry.insert(normalize_prop(&k).to_string(), v);
+                }
+            }
         }
 
         Theme { styles }
@@ -392,56 +532,68 @@ impl Theme {
     }
 
     fn parse_color(&self, s: &str) -> Option<eframe::egui::Color32> {
+        use eframe::egui::Color32;
         let s = s.trim().to_lowercase();
-        if s == "transparent" { return Some(eframe::egui::Color32::TRANSPARENT); }
+        if s == "transparent" { return Some(Color32::TRANSPARENT); }
 
+        // rgb() / rgba()
         if s.starts_with("rgba(") || s.starts_with("rgb(") {
             let is_rgba = s.starts_with("rgba(");
-            let prefix = if is_rgba { "rgba(" } else { "rgb(" };
-            let inner = s.strip_prefix(prefix)?.strip_suffix(')')?.trim();
-            let parts: Vec<&str> = inner.split(',').map(|p| p.trim()).collect();
-
-            let (r, g, b, a) = match (is_rgba, parts.len()) {
-                (true, 4) | (false, 3) => {
-                    let r = parts[0].parse().ok()?;
-                    let g = parts[1].parse().ok()?;
-                    let b = parts[2].parse().ok()?;
-                    let a = if is_rgba { parts[3].parse::<f32>().ok()? } else { 1.0 };
-                    (r, g, b, a)
-                }
-                _ => return None,
-            };
-
-            return Some(eframe::egui::Color32::from_rgba_unmultiplied(r, g, b, (a * 255.0) as u8));
+            let inner   = s.strip_prefix(if is_rgba {"rgba("} else {"rgb("})?.strip_suffix(')')?;
+            let p: Vec<&str> = inner.split(',').map(str::trim).collect();
+            if p.len() < 3 { return None; }
+            let r: u8  = p[0].parse().ok()?;
+            let g: u8  = p[1].parse().ok()?;
+            let b: u8  = p[2].parse().ok()?;
+            let a: f32 = if is_rgba && p.len() == 4 { p[3].parse().ok()? } else { 1.0 };
+            return Some(Color32::from_rgba_unmultiplied(r, g, b, (a*255.0) as u8));
         }
 
+        // hsl() / hsla()
+        if s.starts_with("hsla(") || s.starts_with("hsl(") {
+            let is_hsla = s.starts_with("hsla(");
+            let inner   = s.strip_prefix(if is_hsla {"hsla("} else {"hsl("})?.strip_suffix(')')?;
+            let p: Vec<&str> = inner.split(',').map(str::trim).collect();
+            if p.len() < 3 { return None; }
+            let h = p[0].trim_end_matches("deg").parse::<f32>().ok()? / 360.0;
+            let s = p[1].trim_end_matches('%').parse::<f32>().ok()? / 100.0;
+            let l = p[2].trim_end_matches('%').parse::<f32>().ok()? / 100.0;
+            let a: f32 = if is_hsla && p.len() == 4 { p[3].parse().ok()? } else { 1.0 };
+            let (r, g, b) = hsl_to_rgb(h, s, l);
+            return Some(Color32::from_rgba_unmultiplied(r, g, b, (a*255.0) as u8));
+        }
+
+        // #hex (3, 4, 6, 8 digit)
         if s.starts_with('#') {
-            let hex = s.trim_start_matches('#');
-            match hex.len() {
-                3 => {
-                    let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()?;
-                    let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?;
-                    let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?;
-                    Some(eframe::egui::Color32::from_rgb(r, g, b))
-                }
-                6 => {
-                    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-                    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-                    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-                    Some(eframe::egui::Color32::from_rgb(r, g, b))
-                }
-                8 => {
-                    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-                    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-                    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-                    let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
-                    Some(eframe::egui::Color32::from_rgba_unmultiplied(r, g, b, a))
-                }
+            let h = s.trim_start_matches('#');
+            return match h.len() {
+                3 => Some(Color32::from_rgb(
+                    u8::from_str_radix(&h[0..1].repeat(2), 16).ok()?,
+                    u8::from_str_radix(&h[1..2].repeat(2), 16).ok()?,
+                    u8::from_str_radix(&h[2..3].repeat(2), 16).ok()?,
+                )),
+                4 => Some(Color32::from_rgba_unmultiplied(
+                    u8::from_str_radix(&h[0..1].repeat(2), 16).ok()?,
+                    u8::from_str_radix(&h[1..2].repeat(2), 16).ok()?,
+                    u8::from_str_radix(&h[2..3].repeat(2), 16).ok()?,
+                    u8::from_str_radix(&h[3..4].repeat(2), 16).ok()?,
+                )),
+                6 => Some(Color32::from_rgb(
+                    u8::from_str_radix(&h[0..2], 16).ok()?,
+                    u8::from_str_radix(&h[2..4], 16).ok()?,
+                    u8::from_str_radix(&h[4..6], 16).ok()?,
+                )),
+                8 => Some(Color32::from_rgba_unmultiplied(
+                    u8::from_str_radix(&h[0..2], 16).ok()?,
+                    u8::from_str_radix(&h[2..4], 16).ok()?,
+                    u8::from_str_radix(&h[4..6], 16).ok()?,
+                    u8::from_str_radix(&h[6..8], 16).ok()?,
+                )),
                 _ => None,
-            }
-        } else {
-            None
+            };
         }
+
+        css_named_color(&s)
     }
 
     fn get_px(&self, class: &str, prop: &str) -> Option<f32> {
@@ -453,23 +605,20 @@ impl Theme {
     }
 
     fn get_position(&self, class: &str) -> Option<(f32, f32)> {
+        // normalize_prop maps x→left and y→top at parse time.
         Some((self.get_px(class, "left")?, self.get_px(class, "top")?))
     }
 
     pub fn get_config(&self) -> Config {
         let mut config = Config::default();
-
         if let Some(props) = self.styles.get("config") {
             macro_rules! set {
                 ($key:expr, $field:ident, $typ:ty) => {
                     if let Some(val) = props.get($key) {
-                        if let Ok(parsed) = val.parse::<$typ>() {
-                            config.$field = parsed;
-                        }
+                        if let Ok(parsed) = val.parse::<$typ>() { config.$field = parsed; }
                     }
                 };
             }
-
             set!("enable-recent-apps",        enable_recent_apps,        bool);
             set!("max-search-results",         max_search_results,        usize);
             set!("enable-power-options",       enable_power_options,      bool);
@@ -480,7 +629,6 @@ impl Theme {
             set!("enable-icons",               enable_icons,              bool);
             set!("show-settings-button",       show_settings_button,      bool);
             set!("enable-system-tray",         enable_system_tray,        bool);
-
             if let Some(val) = props.get("time-format") { config.time_format = val.clone(); }
             if let Some(val) = props.get("time-order") {
                 config.time_order = match val.as_str() {
@@ -489,48 +637,46 @@ impl Theme {
                     _        => TimeOrder::MdyHms,
                 };
             }
-
-            if let Some(val) = props.get("power-commands") {
-                config.power_commands = val.split(',').map(|s| s.trim().to_string()).collect();
-            }
-            if let Some(val) = props.get("restart-commands") {
-                config.restart_commands = val.split(',').map(|s| s.trim().to_string()).collect();
-            }
-            if let Some(val) = props.get("logout-commands") {
-                config.logout_commands = val.split(',').map(|s| s.trim().to_string()).collect();
+            for (key, field) in [
+                ("power-commands",   &mut config.power_commands),
+                ("restart-commands", &mut config.restart_commands),
+                ("logout-commands",  &mut config.logout_commands),
+            ] {
+                if let Some(val) = props.get(key) {
+                    *field = val.split(',').map(|s| s.trim().to_string()).collect();
+                }
             }
         }
-
         config
     }
 
     fn get_frame_props(&self, class: &str, default: eframe::egui::Color32)
         -> (eframe::egui::Color32, Option<eframe::egui::Color32>, eframe::egui::CornerRadius)
     {
-        let base  = self.get(class, "background-color").and_then(|s| self.parse_color(&s)).unwrap_or(default);
-        let hover = self.get(class, "background-color-hover").and_then(|s| self.parse_color(&s));
+        let base  = self.get(class, "background-color")
+                        .and_then(|s| self.parse_color(&s)).unwrap_or(default);
+        // :hover pseudo-class block takes precedence over the legacy -hover suffix.
+        let hover = self.get(&format!("{}:hover", class), "background-color")
+                        .or_else(|| self.get(class, "background-color-hover"))
+                        .and_then(|s| self.parse_color(&s));
         let round = self.get(class, "border-radius")
-            .and_then(|s| s.replace("px", "").parse::<f32>().ok())
-            .map(|v| eframe::egui::CornerRadius::same(v as u8))
-            .unwrap_or_default();
+                        .and_then(|s| s.replace("px", "").trim().parse::<f32>().ok())
+                        .map(|v| eframe::egui::CornerRadius::same(v as u8))
+                        .unwrap_or_default();
         (base, hover, round)
     }
 
     pub fn apply_style(&self, ui: &mut eframe::egui::Ui, class: &str) {
         let style = ui.style_mut();
         if let Some(bg) = self.get(class, "background-color").and_then(|s| self.parse_color(&s)) {
-            // Don't set panel_fill when transparent — egui would paint a solid
-            // background rect for the container even if we skip our own rect_filled.
-            if bg != eframe::egui::Color32::TRANSPARENT {
-                style.visuals.panel_fill = bg;
-            }
+            if bg != eframe::egui::Color32::TRANSPARENT { style.visuals.panel_fill = bg; }
         }
         if let Some(tc) = self.get(class, "color").and_then(|s| self.parse_color(&s)) {
             style.visuals.override_text_color = Some(tc);
         }
         if let Some(pad) = self.get_px(class, "padding") {
-            style.spacing.item_spacing       = eframe::egui::vec2(pad, pad);
-            style.spacing.window_margin      = eframe::egui::Margin::symmetric(pad as i8, pad as i8);
+            style.spacing.item_spacing  = eframe::egui::vec2(pad, pad);
+            style.spacing.window_margin = eframe::egui::Margin::symmetric(pad as i8, pad as i8);
         }
         if let Some(rad) = self.get_px(class, "border-radius") {
             let r = eframe::egui::CornerRadius::same(rad as u8);
@@ -540,15 +686,16 @@ impl Theme {
             }
         }
         if let Some(sz) = self.get_px(class, "font-size") {
-            if let Some(text) = style.text_styles.get_mut(&eframe::egui::TextStyle::Body) {
-                text.size = sz;
-            }
+            if let Some(text) = style.text_styles.get_mut(&eframe::egui::TextStyle::Body) { text.size = sz; }
         }
     }
 
     pub fn apply_widget_style(&self, style: &mut eframe::egui::Style, class: &str) {
         if let Some(bg) = self.get(class, "background-color").and_then(|s| self.parse_color(&s)) {
-            let hover = self.get(class, "background-color-hover").and_then(|s| self.parse_color(&s)).unwrap_or(bg);
+            let hover = self.get(&format!("{}:hover", class), "background-color")
+                            .or_else(|| self.get(class, "background-color-hover"))
+                            .and_then(|s| self.parse_color(&s))
+                            .unwrap_or(bg);
             set_widget_bg(style, bg, hover);
         }
         if let Some(tc) = self.get(class, "color").and_then(|s| self.parse_color(&s)) {
@@ -558,14 +705,16 @@ impl Theme {
 
     fn get_text_color(&self, class: &str, hovered: bool) -> Option<eframe::egui::Color32> {
         if hovered {
-            self.get(class, "color-hover").and_then(|s| self.parse_color(&s))
-                .or_else(|| self.get(class, "color").and_then(|s| self.parse_color(&s)))
+            // :hover pseudo-class block first, then legacy color-hover suffix.
+            self.get(&format!("{}:hover", class), "color")
+                .or_else(|| self.get(class, "color-hover"))
+                .or_else(|| self.get(class, "color"))
+                .and_then(|s| self.parse_color(&s))
         } else {
             self.get(class, "color").and_then(|s| self.parse_color(&s))
         }
     }
 }
-
 fn set_widget_bg(style: &mut eframe::egui::Style, base: eframe::egui::Color32, hover: eframe::egui::Color32) {
     let t = eframe::egui::Color32::TRANSPARENT;
     let w = &mut style.visuals.widgets;
@@ -582,29 +731,100 @@ fn custom_button(ui: &mut eframe::egui::Ui, label: &str, class: &str, theme: &Th
     custom_button_width(ui, label, class, theme, None)
 }
 
-fn custom_button_width(ui: &mut eframe::egui::Ui, label: &str, class: &str, theme: &Theme, min_width: Option<f32>) -> eframe::egui::Response {
-    let font_id = ui.style().text_styles.get(&eframe::egui::TextStyle::Button).cloned().unwrap_or_default();
-    let galley  = ui.painter().layout_no_wrap(label.to_owned(), font_id.clone(), eframe::egui::Color32::WHITE);
-    let text_size = galley.size() + ui.spacing().button_padding * 2.0;
-    let w = match min_width {
-        Some(mw) => text_size.x.max(mw),
-        None     => text_size.x,
+/// Truncate `text` to fit within `max_w` pixels using the given font, appending `…`.
+fn truncate_text(ui: &eframe::egui::Ui, text: &str, font_id: &eframe::egui::FontId, max_w: f32) -> String {
+    let measure = |s: &str| -> f32 {
+        ui.painter().layout_no_wrap(s.to_owned(), font_id.clone(), eframe::egui::Color32::WHITE).size().x
     };
-    let size = eframe::egui::vec2(w, text_size.y);
-    // Allocate with click+hover sense directly — splitting into allocate(hover) + interact(click)
-    // causes egui to consume the hover event in the discarded first response, breaking hover.
-    let (rect, resp) = ui.allocate_exact_size(size, eframe::egui::Sense::click_and_drag());
+    if measure(text) <= max_w { return text.to_owned(); }
+    let ew = measure("…");
+    let limit = (max_w - ew).max(0.0);
+    let chars: Vec<char> = text.chars().collect();
+    let (mut lo, mut hi) = (0usize, chars.len());
+    while lo < hi {
+        let mid = (lo + hi + 1) / 2;
+        let s: String = chars[..mid].iter().collect();
+        if measure(&s) <= limit { lo = mid; } else { hi = mid - 1; }
+    }
+    format!("{}…", chars[..lo].iter().collect::<String>())
+}
+
+fn custom_button_width(
+    ui: &mut eframe::egui::Ui,
+    label: &str,
+    class: &str,
+    theme: &Theme,
+    min_width: Option<f32>,
+) -> eframe::egui::Response {
+    custom_button_scroll(ui, label, class, theme, min_width, None)
+}
+
+/// Render a themed button.  When `scroll_offset` is `Some(x)`, the full label
+/// is drawn clipped and shifted left by `x` pixels (marquee scroll on hover).
+/// When `None`, long text is truncated with `…`.
+fn custom_button_scroll(
+    ui: &mut eframe::egui::Ui,
+    label: &str,
+    class: &str,
+    theme: &Theme,
+    min_width: Option<f32>,
+    scroll_offset: Option<f32>,
+) -> eframe::egui::Response {
+    let font_id   = ui.style().text_styles.get(&eframe::egui::TextStyle::Button).cloned().unwrap_or_default();
+    let pad       = ui.spacing().button_padding;
+    let full_size = ui.painter().layout_no_wrap(label.to_owned(), font_id.clone(), eframe::egui::Color32::WHITE).size();
+    let w         = min_width.unwrap_or(full_size.x + pad.x * 2.0);
+    let h         = full_size.y + pad.y * 2.0;
+    let (rect, resp) = ui.allocate_exact_size(eframe::egui::vec2(w, h), eframe::egui::Sense::click_and_drag());
 
     if ui.is_rect_visible(rect) {
         let (base, hover_opt, round) = theme.get_frame_props(class, ui.style().visuals.widgets.inactive.bg_fill);
         let normal_tc = theme.get(class, "color").and_then(|s| theme.parse_color(&s)).unwrap_or(eframe::egui::Color32::WHITE);
-        let hover_tc  = theme.get(class, "color-hover").and_then(|s| theme.parse_color(&s)).unwrap_or(normal_tc);
-
+        let hover_tc  = theme.get(&format!("{}:hover", class), "color")
+                            .or_else(|| theme.get(class, "color-hover"))
+                            .and_then(|s| theme.parse_color(&s))
+                            .unwrap_or(normal_tc);
         let bg = if resp.hovered() { hover_opt.unwrap_or(base) } else { base };
         let tc = if resp.hovered() { hover_tc } else { normal_tc };
 
-        ui.painter().rect_filled(rect, round, bg);
-        ui.painter().text(rect.center(), eframe::egui::Align2::CENTER_CENTER, label, font_id, tc);
+        let avail_text_w = (w - pad.x * 2.0).max(0.0);
+
+        // Background rect: text-content width rather than full row width.
+        // When scrolling we cap it to avail_text_w (the visible window).
+        let bg_text_w = match scroll_offset {
+            Some(_) => avail_text_w,
+            None    => {
+                let display = truncate_text(ui, label, &font_id, avail_text_w);
+                ui.painter().layout_no_wrap(display, font_id.clone(), eframe::egui::Color32::WHITE).size().x
+            }
+        };
+        let bg_rect = eframe::egui::Rect::from_min_size(
+            rect.min,
+            eframe::egui::vec2((bg_text_w + pad.x * 2.0).min(w), h),
+        );
+        ui.painter().rect_filled(bg_rect, round, bg);
+
+        match scroll_offset {
+            Some(offset) => {
+                let clip = eframe::egui::Rect::from_min_size(
+                    eframe::egui::pos2(rect.min.x + pad.x, rect.min.y),
+                    eframe::egui::vec2(avail_text_w, h),
+                );
+                ui.painter().with_clip_rect(clip).text(
+                    eframe::egui::pos2(clip.min.x - offset, rect.center().y),
+                    eframe::egui::Align2::LEFT_CENTER,
+                    label, font_id, tc,
+                );
+            }
+            None => {
+                let display = truncate_text(ui, label, &font_id, avail_text_w);
+                ui.painter().text(
+                    eframe::egui::pos2(rect.min.x + pad.x, rect.center().y),
+                    eframe::egui::Align2::LEFT_CENTER,
+                    &display, font_id, tc,
+                );
+            }
+        }
     }
     resp
 }
@@ -640,6 +860,11 @@ fn with_alignment<R>(
     }
 }
 
+/// Build a ViewportId for a tray menu popup.
+fn tray_menu_vp_id(icon_id: &str) -> eframe::egui::ViewportId {
+    eframe::egui::ViewportId::from_hash_of(format!("tray_menu_{icon_id}"))
+}
+
 // ============================================================================
 // AppInterface
 // ============================================================================
@@ -657,57 +882,33 @@ pub trait AppInterface {
 }
 
 // ============================================================================
-// LayoutCache – computed once from Theme + Config, never recomputed.
-//
-// Eliminates dozens of HashMap lookups per frame:
-//   • Window size / background color / bg image path
-//   • Sorted section list with pre-fetched positions and size constraints
-//   • App-row element order (avoids Vec alloc + sort per visible app per frame)
-//   • Settings button / icon geometry (avoids 4+ lookups per visible app per frame)
-//   • Env popup dimensions (avoids 3 lookups per open popup per frame)
+// LayoutCache
 // ============================================================================
 
-/// Which sub-element to render inside an app row.
 #[derive(Clone, Copy)]
 enum ElemKind { Settings, Icon, App }
 
-/// Pre-resolved background image data.
-struct BgImage {
-    path:      String,
-    size_mode: String,
-    opacity:   f32,
-}
+struct BgImage { path: String, size_mode: String, opacity: f32 }
 
-/// A section with its position and optional size constraints pre-fetched.
-struct SectionInfo {
-    name: &'static str,
-    pos:  Option<(f32, f32)>,
-    size: Option<eframe::egui::Vec2>,
-}
+struct SectionInfo { name: &'static str, pos: Option<(f32, f32)>, size: Option<eframe::egui::Vec2> }
 
 struct LayoutCache {
-    win_size:    eframe::egui::Vec2,
-    win_bg:      eframe::egui::Color32,
-    /// Background image, fully resolved (path + size mode + opacity).
-    /// `None` means draw a plain colour rect – no per-frame APP_CACHE lock needed.
-    bg_image:    Option<BgImage>,
-    /// Sections in their final render order, positions and size constraints baked in.
-    sections:    Vec<SectionInfo>,
-    /// App-row element order (settings / icon / button), sorted once.
-    elem_order:  Vec<ElemKind>,
-    settings_w:  f32,
-    settings_h:  f32,
-    settings_ox: f32,
-    settings_oy: f32,
-    icon_w:      f32,
-    icon_h:      f32,
-    vol_gap:     Option<f32>,
-    env_w:       f32,
-    env_h:       f32,
-    /// Tray strip dimensions, pre-fetched so render_tray_icon has no theme lookups.
-    tray_w:      f32,
-    tray_h:      f32,
-    /// Colour of the live-status dot in the tray-icon widget. Pre-parsed once.
+    win_size:             eframe::egui::Vec2,
+    win_bg:               eframe::egui::Color32,
+    bg_image:             Option<BgImage>,
+    sections:             Vec<SectionInfo>,
+    elem_order:           Vec<ElemKind>,
+    settings_w:           f32,
+    settings_h:           f32,
+    settings_ox:          f32,
+    settings_oy:          f32,
+    icon_w:               f32,
+    icon_h:               f32,
+    vol_gap:              Option<f32>,
+    env_w:                f32,
+    env_h:                f32,
+    tray_w:               f32,
+    tray_h:               f32,
     tray_indicator_color: eframe::egui::Color32,
 }
 
@@ -720,23 +921,17 @@ impl LayoutCache {
             theme.get_px("main-window", "height").unwrap_or(200.0),
         );
         let win_bg = theme.get("main-window", "background-color")
-            .and_then(|s| theme.parse_color(&s))
-            .unwrap_or(egui::Color32::BLACK);
+            .and_then(|s| theme.parse_color(&s)).unwrap_or(egui::Color32::BLACK);
 
-        // Resolve background image path once so we never lock APP_CACHE per frame.
         let bg_image = theme.get("main-window", "background-image")
             .filter(|s| !s.is_empty())
             .and_then(|img| resolve_icon_path("main-window", &img, config))
             .map(|path| BgImage {
-                size_mode: theme.get("main-window", "background-size")
-                    .unwrap_or_else(|| "stretch".to_string()),
-                opacity: theme.get("main-window", "background-opacity")
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(1.0),
+                size_mode: theme.get("main-window", "background-size").unwrap_or_else(|| "stretch".into()),
+                opacity:   theme.get("main-window", "background-opacity").and_then(|s| s.parse().ok()).unwrap_or(1.0),
                 path,
             });
 
-        // Build and sort sections list once.
         let mut raw: Vec<(&'static str, i32)> = vec![
             ("search-bar", theme.get_order("search-bar")),
             ("app-list",   theme.get_order("app-list")),
@@ -747,43 +942,33 @@ impl LayoutCache {
         if config.enable_system_tray   { raw.push(("tray-icon",      theme.get_order("tray-icon"))); }
         raw.sort_by_key(|(_, o)| *o);
 
-        let sections = raw.into_iter().map(|(name, _)| {
-            let pos  = theme.get_position(name);
-            let size = if matches!(name, "search-bar" | "app-list") {
-                theme.get_px(name, "width")
-                    .zip(theme.get_px(name, "height"))
-                    .map(|(w, h)| egui::vec2(w, h))
-            } else {
-                None
-            };
-            SectionInfo { name, pos, size }
+        let sections = raw.into_iter().map(|(name, _)| SectionInfo {
+            pos:  theme.get_position(name),
+            size: if matches!(name, "search-bar" | "app-list") {
+                theme.get_px(name, "width").zip(theme.get_px(name, "height")).map(|(w, h)| egui::vec2(w, h))
+            } else { None },
+            name,
         }).collect();
 
-        // Pre-sort element ordering for app rows (previously rebuilt per-app per-frame).
         let mut elems: Vec<(i32, ElemKind)> = vec![
             (theme.get("settings-button", "order").and_then(|s| s.parse().ok()).unwrap_or(0), ElemKind::Settings),
             (theme.get("app-icon",        "order").and_then(|s| s.parse().ok()).unwrap_or(1), ElemKind::Icon),
             (theme.get("app-button",      "order").and_then(|s| s.parse().ok()).unwrap_or(2), ElemKind::App),
         ];
         elems.sort_by_key(|(o, _)| *o);
-        let elem_order = elems.into_iter().map(|(_, k)| k).collect();
 
-        // Pre-parse the tray status-dot colour once; fall back to a pleasant green.
         let tray_indicator_color = theme.get("tray-icon", "indicator-color")
             .and_then(|s| theme.parse_color(&s))
             .unwrap_or(egui::Color32::from_rgb(94, 206, 135));
 
-        // Window width minus margins; matches the CSS default.
         let win_w = theme.get_px("main-window", "width").unwrap_or(220.0);
-        let tray_w = theme.get_px("tray-icon", "width").unwrap_or(win_w - 24.0);
-        let tray_h = theme.get_px("tray-icon", "height").unwrap_or(18.0);
 
         LayoutCache {
             win_size,
             win_bg,
             bg_image,
             sections,
-            elem_order,
+            elem_order:  elems.into_iter().map(|(_, k)| k).collect(),
             settings_w:  theme.get_px("settings-button", "width").unwrap_or(22.0),
             settings_h:  theme.get_px("settings-button", "height").unwrap_or(22.0),
             settings_ox: theme.get_px("settings-button", "offset-x").unwrap_or(0.0),
@@ -793,8 +978,8 @@ impl LayoutCache {
             vol_gap:     theme.get_px("volume-slider", "gap"),
             env_w:       theme.get_px("env-input", "width").unwrap_or(300.0),
             env_h:       theme.get_px("env-input", "height").unwrap_or(150.0),
-            tray_w,
-            tray_h,
+            tray_w:      theme.get_px("tray-icon", "width").unwrap_or(win_w - 24.0),
+            tray_h:      theme.get_px("tray-icon", "height").unwrap_or(18.0),
             tray_indicator_color,
         }
     }
@@ -821,42 +1006,44 @@ impl EframeGui {
             .with_active(true)
             .with_transparent(true);
 
-        let audio = crate::system::AudioController::new(&cfg)?;
+        let audio    = crate::system::AudioController::new(&cfg)?;
         audio.start_polling(&cfg);
-
-        // Start the SNI watcher so apps register their tray icons with us.
         let sni_host = crate::sni::SniHost::new(&cfg);
 
         eframe::run_native(
             "Application Launcher",
-            eframe::NativeOptions { viewport, ..Default::default() },
+            eframe::NativeOptions {
+                viewport,
+                renderer: eframe::Renderer::Wgpu,
+                ..Default::default()
+            },
             Box::new(move |cc| {
                 if let Some(s) = theme.get("env-input", "scaling").and_then(|s| s.parse::<f32>().ok()) {
                     cc.egui_ctx.set_pixels_per_point(s);
                 }
                 cc.egui_ctx.request_repaint();
-
-                // Prime time cache immediately so first frame shows real value.
                 let cached_time = app.get_time();
-
-                    Ok(Box::new(EframeWrapper {
-                        app,
-                        audio_controller: audio,
-                        current_volume: 0.0,
-                        editing_windows: HashMap::new(),
-                        focused: false,
-                        icon_manager: crate::app_launcher::IconManager::new(),
-                        layout,
-                        cached_time,
-                        last_time_update: Instant::now(),
-                        theme,
-                        config: cfg,
-                        sni_host,
-                        tray_textures: HashMap::new(),
-                        tray_name_cache: HashMap::new(),
-                        tray_menu_open: None,
-                        tray_menu_fetched: None,
-                    }))
+                Ok(Box::new(EframeWrapper {
+                    app,
+                    audio_controller: audio,
+                    current_volume: 0.0,
+                    editing_windows: HashMap::new(),
+                    focused: false,
+                    icon_manager: crate::app_launcher::IconManager::new(),
+                    layout,
+                    cached_time,
+                    last_time_update: Instant::now(),
+                    theme,
+                    config: cfg,
+                    sni_host,
+                    // Key: icon.id (or "{id}_attn"). Value: (icon_rev, TextureHandle).
+                    // Re-uploaded when icon_rev differs from stored rev.
+                    tray_textures: HashMap::new(),
+                    tray_name_cache: HashMap::new(),
+                    tray_menu_open: None,
+                    tray_menu_fetched: None,
+                    scroll_offsets: HashMap::new(),
+                }))
             }),
         )?;
         Ok(())
@@ -869,26 +1056,20 @@ struct EframeWrapper {
     current_volume:   f32,
     editing_windows:  HashMap<String, String>,
     focused:          bool,
-    /// Unified icon cache for both app icons and tray pixmaps.
     icon_manager:     crate::app_launcher::IconManager,
     layout:           LayoutCache,
-    /// Clock string, refreshed at most once per second instead of every frame.
     cached_time:      String,
     last_time_update: Instant,
-    /// Arc so clones in viewport closures are a pointer copy, not a deep clone.
     theme:            Arc<Theme>,
     config:           Config,
-    /// SNI host handle; `None` when `enable_system_tray` is false.
     sni_host:         Option<crate::sni::SniHost>,
-    /// Cached egui textures for SNI ARGB32 pixmaps, keyed by "{id}" or "{id}_attn".
-    /// File-path-based tray icons go through icon_manager instead.
-    tray_textures:    HashMap<String, eframe::egui::TextureHandle>,
-    /// Cache of resolved file paths for SNI icon names (avoids per-frame filesystem walk).
-    /// Maps icon-name → resolved path (None = not found, skip re-searching).
+    /// (icon_rev, handle) — re-uploaded when rev changes.
+    tray_textures:    HashMap<String, (u32, eframe::egui::TextureHandle)>,
     tray_name_cache:  HashMap<String, Option<String>>,
-    /// Which tray icon's menu is open, and whether we've fetched it yet.
     tray_menu_open:    Option<String>,
     tray_menu_fetched: Option<String>,
+    /// Per-app scroll offset for marquee text on hover (pixels from left).
+    scroll_offsets:   HashMap<String, f32>,
 }
 
 impl EframeWrapper {
@@ -906,7 +1087,7 @@ impl EframeWrapper {
                     }
                 }, |ui| {
                     let mut query = self.app.get_query();
-                    let r = ui.add(eframe::egui::TextEdit::singleline(&mut query).hint_text("Search...").frame(false));
+                    let r = ui.add(eframe::egui::TextEdit::singleline(&mut query).hint_text("Search...").frame(eframe::egui::Frame::NONE));
                     if !self.focused { r.request_focus(); self.focused = true; }
                     if r.changed() && !query.starts_with("LAUNCH_OPTIONS:") { self.app.handle_input(&query); }
                 })
@@ -921,15 +1102,12 @@ impl EframeWrapper {
                 if let Some(gap) = self.layout.vol_gap { ui.spacing_mut().item_spacing.x = gap; }
                 ui.label("Volume:");
                 let (base, hover, round) = self.theme.get_frame_props("volume-slider", ui.style().visuals.widgets.inactive.bg_fill);
-                let vis = {
-                    let mut s = ui.style().visuals.widgets.inactive.clone();
-                    s.bg_fill = base; s.corner_radius = round; s
-                };
+                let vis = { let mut s = ui.style().visuals.widgets.inactive.clone(); s.bg_fill = base; s.corner_radius = round; s };
                 with_custom_style(ui, |s| {
-                    s.visuals.widgets.inactive = vis.clone();
-                    s.visuals.widgets.hovered.bg_fill       = hover.unwrap_or(base);
-                    s.visuals.widgets.hovered.weak_bg_fill  = hover.unwrap_or(base);
-                    s.visuals.widgets.active = vis;
+                    s.visuals.widgets.inactive        = vis.clone();
+                    s.visuals.widgets.hovered.bg_fill = hover.unwrap_or(base);
+                    s.visuals.widgets.hovered.weak_bg_fill = hover.unwrap_or(base);
+                    s.visuals.widgets.active          = vis;
                     let t = eframe::egui::Color32::TRANSPARENT;
                     s.visuals.widgets.inactive.bg_stroke = eframe::egui::Stroke::new(0.0, t);
                     s.visuals.widgets.hovered.bg_stroke  = eframe::egui::Stroke::new(0.0, t);
@@ -949,45 +1127,47 @@ impl EframeWrapper {
     fn render_app_list(&mut self, ui: &mut eframe::egui::Ui, ctx: &eframe::egui::Context) {
         self.theme.apply_style(ui, "app-list");
         let query    = self.app.get_query();
-        let filtered: Vec<String> = if query.trim().is_empty() {
-            if self.config.enable_recent_apps {
-                self.app.get_search_results().into_iter().take(self.config.max_search_results).collect()
-            } else {
-                Vec::new()
-            }
+        let filtered: Vec<String> = if query.trim().is_empty() && !self.config.enable_recent_apps {
+            Vec::new()
         } else {
             self.app.get_search_results().into_iter().take(self.config.max_search_results).collect()
         };
 
         ui.vertical(|ui| {
             for app_name in filtered {
-                let row_id = ui.id().with(&app_name);
+                let _row_id = ui.id().with(&app_name);
                 ui.horizontal(|ui| {
-                    // Use pre-sorted element order from LayoutCache –
-                    // previously a Vec was allocated and sorted for every visible app every frame.
                     for &kind in &self.layout.elem_order {
                         match kind {
                             ElemKind::Settings if self.config.show_settings_button => {
                                 let (w, h)   = (self.layout.settings_w, self.layout.settings_h);
                                 let (ox, oy) = (self.layout.settings_ox, self.layout.settings_oy);
-                                let (base_rect, _) = ui.allocate_exact_size(eframe::egui::vec2(w, h), eframe::egui::Sense::hover());
-                                let rect = base_rect.translate(eframe::egui::vec2(ox, oy));
-                                let resp = ui.interact(rect, row_id.with("settings-button"), eframe::egui::Sense::click());
-                                self.theme.apply_style(ui, "settings-button");
+                                // Interact on the ALLOCATED rect only — translating the interact
+                                // rect outside its allocation triggers egui's debug red box.
+                                let (base_rect, resp) = ui.allocate_exact_size(
+                                    eframe::egui::vec2(w, h),
+                                    eframe::egui::Sense::click(),
+                                );
+                                // Offset is applied only to the PAINT position, not the layout rect.
+                                let paint_center = base_rect.center() + eframe::egui::vec2(ox, oy);
+                                // Don't call apply_style here — mutating panel_fill mid-row corrupts
+                                // the clip state for the icon cell that follows.
                                 let color = self.theme.get_text_color("settings-button", resp.hovered())
                                     .unwrap_or(eframe::egui::Color32::from_rgb(64, 64, 64));
                                 let font = eframe::egui::TextStyle::Button.resolve(ui.style());
-                                ui.painter().text(rect.center(), eframe::egui::Align2::CENTER_CENTER, "⚙", font, color);
+                                ui.painter().text(paint_center, eframe::egui::Align2::CENTER_CENTER, "⚙", font, color);
                                 if resp.clicked() {
                                     self.editing_windows.insert(app_name.clone(), self.app.get_formatted_launch_options(&app_name));
                                 }
                             }
                             ElemKind::Icon if self.config.enable_icons => {
+                                // Always allocate icon space so every row has the same width,
+                                // regardless of whether this particular app has an icon.
+                                let (rect, _) = ui.allocate_exact_size(
+                                    eframe::egui::vec2(self.layout.icon_w, self.layout.icon_h),
+                                    eframe::egui::Sense::hover(),
+                                );
                                 if let Some(icon_path) = self.app.get_icon_path(&app_name) {
-                                    let (rect, _) = ui.allocate_exact_size(
-                                        eframe::egui::vec2(self.layout.icon_w, self.layout.icon_h),
-                                        eframe::egui::Sense::hover(),
-                                    );
                                     if let Some(tex) = self.icon_manager.get_texture(ctx, &icon_path) {
                                         ui.painter().image(
                                             tex.id(), rect,
@@ -998,11 +1178,40 @@ impl EframeWrapper {
                                 }
                             }
                             ElemKind::App => {
-                                // Sense::click_and_drag is set inside custom_button_width — no second interact needed.
-                                let resp = custom_button_width(ui, &app_name, "app-button", &self.theme, None);
+                                let btn_w = ui.available_width();
+                                let font_id = ui.style().text_styles
+                                    .get(&eframe::egui::TextStyle::Button).cloned().unwrap_or_default();
+                                let pad = ui.spacing().button_padding;
+                                let avail_text_w = (btn_w - pad.x * 2.0).max(0.0);
+                                let full_text_w = ui.painter().layout_no_wrap(
+                                    app_name.clone(), font_id, eframe::egui::Color32::WHITE,
+                                ).size().x;
+                                // Marquee on hover when text overflows; truncate with … otherwise.
+                                let scroll_offset = if full_text_w > avail_text_w {
+                                    let hover_rect = eframe::egui::Rect::from_min_size(
+                                        ui.cursor().min, eframe::egui::vec2(btn_w, 22.0),
+                                    );
+                                    if ui.rect_contains_pointer(hover_rect) {
+                                        let max_scroll = full_text_w - avail_text_w + 20.0;
+                                        let off = self.scroll_offsets.entry(app_name.clone()).or_insert(-20.0);
+                                        *off = (*off + 1.2).min(max_scroll);
+                                        if *off >= max_scroll { *off = -20.0; } // loop
+                                        ctx.request_repaint();
+                                        Some(off.max(0.0))
+                                    } else {
+                                        self.scroll_offsets.remove(&app_name);
+                                        None
+                                    }
+                                } else {
+                                    self.scroll_offsets.remove(&app_name);
+                                    None
+                                };
+                                let resp = custom_button_scroll(ui, &app_name, "app-button",
+                                    &self.theme, Some(btn_w), scroll_offset);
                                 if resp.clicked()           { self.app.launch_app(&app_name); }
                                 if resp.secondary_clicked() {
-                                    self.editing_windows.insert(app_name.clone(), self.app.get_formatted_launch_options(&app_name));
+                                    self.editing_windows.insert(app_name.clone(),
+                                        self.app.get_formatted_launch_options(&app_name));
                                 }
                             }
                             _ => {}
@@ -1017,7 +1226,7 @@ impl EframeWrapper {
     fn render_time_display(&mut self, ui: &mut eframe::egui::Ui) {
         with_alignment(ui, &self.theme, "time-display", |ui| {
             self.theme.apply_style(ui, "time-display");
-            ui.label(&self.cached_time); // throttled to 1 Hz, not every frame
+            ui.label(&self.cached_time);
         });
     }
 
@@ -1040,96 +1249,74 @@ impl EframeWrapper {
 
         self.theme.apply_style(ui, "tray-icon");
 
-        // Use pre-cached dimensions from LayoutCache — no theme lookups per frame.
-        let tray_w = self.layout.tray_w;
-        let tray_h = self.layout.tray_h;
-
         const ICON_SZ: f32 = 16.0;
         const GAP:     f32 = 3.0;
+        let (tray_w, tray_h) = (self.layout.tray_w, self.layout.tray_h);
         let icon_size = egui::vec2(ICON_SZ, ICON_SZ);
 
-        // Draw strip background (skip when transparent to avoid egui filling the area).
         let (bg, _, round) = self.theme.get_frame_props("tray-icon", egui::Color32::TRANSPARENT);
         let strip_origin = ui.cursor().min;
         if bg != egui::Color32::TRANSPARENT {
             ui.painter().rect_filled(
-                egui::Rect::from_min_size(strip_origin, egui::vec2(tray_w, tray_h)),
-                round, bg,
+                egui::Rect::from_min_size(strip_origin, egui::vec2(tray_w, tray_h)), round, bg,
             );
         }
-
         let (strip_rect, _) = ui.allocate_exact_size(egui::vec2(tray_w, tray_h), egui::Sense::hover());
 
-        // Clone only the visible icons from the mutex rather than the full list.
-        // try_lock avoids blocking the render thread if the SNI thread holds the lock.
-        let icons: Vec<crate::sni::TrayIcon> = self
-            .sni_host
+        let icons: Vec<crate::sni::TrayIcon> = self.sni_host
             .as_ref()
             .and_then(|h| h.items.try_lock().ok())
             .map(|g| g.iter().filter(|i| i.status != crate::sni::TrayStatus::Passive).cloned().collect())
             .unwrap_or_default();
 
-        let visible: Vec<&crate::sni::TrayIcon> = icons.iter().collect();
-
-        if visible.is_empty() {
-            let dot_r = 3.0_f32;
+        if icons.is_empty() {
+            let dot_r  = 3.0_f32;
             let center = egui::pos2(strip_rect.min.x + GAP + dot_r, strip_rect.center().y);
             ui.painter().circle_filled(center, dot_r, self.layout.tray_indicator_color);
             return;
         }
 
-        // Pack icons left-to-right; each is vertically centred in the strip.
         let cy  = strip_rect.center().y;
         let mut x = strip_rect.min.x + GAP;
 
-        for icon in &visible {
-            let icon_rect = egui::Rect::from_min_size(
-                egui::pos2(x, cy - ICON_SZ * 0.5),
-                icon_size,
-            );
+        for icon in &icons {
+            let icon_rect = egui::Rect::from_min_size(egui::pos2(x, cy - ICON_SZ * 0.5), icon_size);
             x += ICON_SZ + GAP;
 
-            // ── Texture upload ──────────────────────────────────────────────
-            let use_attention = icon.status == crate::sni::TrayStatus::NeedsAttention
+            let use_attn = icon.status == crate::sni::TrayStatus::NeedsAttention
                 && (!icon.attention_icon_rgba.is_empty() || icon.attention_icon_name.is_some());
 
-            let (tex_rgba, tex_w, tex_h, tex_name) = if use_attention {
+            let (tex_rgba, tex_w, tex_h, tex_name) = if use_attn {
                 (&icon.attention_icon_rgba, icon.attention_icon_w, icon.attention_icon_h, &icon.attention_icon_name)
             } else {
                 (&icon.icon_rgba, icon.icon_w, icon.icon_h, &icon.icon_name)
             };
-            let tex_key = if use_attention { format!("{}_attn", icon.id) } else { icon.id.clone() };
+            let tex_key = if use_attn { format!("{}_attn", icon.id) } else { icon.id.clone() };
 
-            if tex_w > 0 && tex_h > 0 && !tex_rgba.is_empty()
-                && !self.tray_textures.contains_key(&tex_key)
-            {
-                // SNI pixmaps are ARGB32 (network byte order / big-endian u32 per pixel).
-                // egui expects RGBA, so reorder: [A,R,G,B] → [R,G,B,A].
-                let mut rgba = vec![0u8; tex_rgba.len()];
-                for (src, dst) in tex_rgba.chunks_exact(4).zip(rgba.chunks_exact_mut(4)) {
-                    dst[0] = src[1]; // R
-                    dst[1] = src[2]; // G
-                    dst[2] = src[3]; // B
-                    dst[3] = src[0]; // A
+            // Re-upload texture only when pixel data has changed (tracked via icon_rev).
+            // NOTE: icon_rgba is already RGBA — argb_to_rgba() was called once in sni.rs.
+            //       Do NOT convert again here.
+            if tex_w > 0 && tex_h > 0 && !tex_rgba.is_empty() {
+                let needs_upload = self.tray_textures.get(&tex_key)
+                    .map(|(rev, _)| *rev != icon.icon_rev)
+                    .unwrap_or(true);
+                if needs_upload {
+                    let img    = egui::ColorImage::from_rgba_unmultiplied([tex_w as usize, tex_h as usize], tex_rgba);
+                    let handle = ctx.load_texture(&tex_key, img, egui::TextureOptions::LINEAR);
+                    self.tray_textures.insert(tex_key.clone(), (icon.icon_rev, handle));
                 }
-                let img    = egui::ColorImage::from_rgba_unmultiplied([tex_w as usize, tex_h as usize], &rgba);
-                let handle = ctx.load_texture(&tex_key, img, egui::TextureOptions::LINEAR);
-                self.tray_textures.insert(tex_key.clone(), handle);
             }
 
-            // ── Draw icon ───────────────────────────────────────────────────
             if ui.is_rect_visible(icon_rect) {
-                let texture = self.tray_textures.get(&tex_key);
-                if let Some(tex) = texture {
+                if let Some((_, tex)) = self.tray_textures.get(&tex_key) {
                     ui.painter().image(
                         tex.id(), icon_rect,
                         egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
                         egui::Color32::WHITE,
                     );
-                } else if let Some(name) = tex_name.as_deref().filter(|s: &&str| !s.is_empty()) {
-                    // Cache the resolved path so we don't re-walk the filesystem every frame.
+                } else if let Some(name) = tex_name.as_deref().filter(|s| !s.is_empty()) {
                     let cache_key = format!("{}|{}", name, icon.icon_theme_path.as_deref().unwrap_or(""));
-                    let resolved = self.tray_name_cache
+                    let resolved  = self.tray_name_cache
                         .entry(cache_key)
                         .or_insert_with(|| resolve_tray_icon_name(name, icon.icon_theme_path.as_deref(), &self.config))
                         .as_deref();
@@ -1151,11 +1338,9 @@ impl EframeWrapper {
                 }
             }
 
-            // ── Interact ────────────────────────────────────────────────────
-            let resp = ui.interact(icon_rect, ui.id().with(&icon.id), egui::Sense::click());
-            let resp = resp.on_hover_text(&icon.tooltip_title);
+            let resp = ui.interact(icon_rect, ui.id().with(&icon.id), egui::Sense::click())
+                .on_hover_text(&icon.tooltip_title);
 
-            // Hover highlight / open-menu outline.
             if resp.hovered() || self.tray_menu_open.as_deref() == Some(&icon.id) {
                 ui.painter().rect_stroke(
                     icon_rect, 2.0,
@@ -1164,7 +1349,6 @@ impl EframeWrapper {
                 );
             }
 
-            // Left click → Activate (or ContextMenu when ItemIsMenu == true).
             if resp.clicked() {
                 if let Some(host) = &self.sni_host {
                     if icon.item_is_menu {
@@ -1174,38 +1358,26 @@ impl EframeWrapper {
                         host.activate(&icon.bus_name, &icon.obj_path);
                     }
                 }
-                if self.tray_menu_open.is_some() {
-                    let old_id = self.tray_menu_open.take().unwrap();
-                    let vp_id  = egui::ViewportId::from_hash_of(format!("tray_menu_{}", old_id));
-                    ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Close);
+                if let Some(old_id) = self.tray_menu_open.take() {
+                    ctx.send_viewport_cmd_to(tray_menu_vp_id(&old_id), egui::ViewportCommand::Close);
                 }
             }
 
-            // Scroll wheel → forward to item.
             if resp.hovered() {
                 let scroll = ui.input(|i| i.smooth_scroll_delta);
-                if scroll.y.abs() > 0.5 {
-                    if let Some(host) = &self.sni_host {
-                        host.scroll(&icon.bus_name, &icon.obj_path, scroll.y as i32, "vertical");
-                    }
-                }
-                if scroll.x.abs() > 0.5 {
-                    if let Some(host) = &self.sni_host {
-                        host.scroll(&icon.bus_name, &icon.obj_path, scroll.x as i32, "horizontal");
-                    }
+                if let Some(host) = &self.sni_host {
+                    if scroll.y.abs() > 0.5 { host.scroll(&icon.bus_name, &icon.obj_path, scroll.y as i32, "vertical"); }
+                    if scroll.x.abs() > 0.5 { host.scroll(&icon.bus_name, &icon.obj_path, scroll.x as i32, "horizontal"); }
                 }
             }
 
-            // Right click → open / close DBusMenu viewport.
             if resp.secondary_clicked() {
                 if self.tray_menu_open.as_deref() == Some(&icon.id) {
-                    let vp_id = egui::ViewportId::from_hash_of(format!("tray_menu_{}", icon.id));
-                    ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Close);
+                    ctx.send_viewport_cmd_to(tray_menu_vp_id(&icon.id), egui::ViewportCommand::Close);
                     self.tray_menu_open = None;
                 } else {
                     if let Some(old_id) = self.tray_menu_open.take() {
-                        let vp_id = egui::ViewportId::from_hash_of(format!("tray_menu_{}", old_id));
-                        ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Close);
+                        ctx.send_viewport_cmd_to(tray_menu_vp_id(&old_id), egui::ViewportCommand::Close);
                     }
                     self.tray_menu_open    = Some(icon.id.clone());
                     self.tray_menu_fetched = None;
@@ -1215,7 +1387,6 @@ impl EframeWrapper {
                 }
             }
 
-            // Menu viewport — only rendered for the currently-open icon.
             if self.tray_menu_open.as_deref() == Some(&icon.id) {
                 if self.tray_menu_fetched.as_deref() != Some(&icon.id) {
                     if let (Some(host), Some(menu_path)) = (&self.sni_host, &icon.menu_path) {
@@ -1225,32 +1396,30 @@ impl EframeWrapper {
                 }
 
                 if icon.menu_path.is_some() {
-                    let menu_items  = icon.menu_items.clone();
-                    let menu_loaded = icon.menu_loaded;
-                    let icon_id     = icon.id.clone();
-                    let bus_name    = icon.bus_name.clone();
-                    let menu_path   = icon.menu_path.clone();
-                    let indicator   = self.layout.tray_indicator_color;
-                    let win_bg      = self.layout.win_bg;
-                    let tooltip     = icon.tooltip_title.clone();
-                    let action_key  = format!("tray_menu_action_{}", icon_id);
-                    let theme_menu  = Arc::clone(&self.theme);
+                    let menu_items   = icon.menu_items.clone();
+                    let menu_loaded  = icon.menu_loaded;
+                    let icon_id      = icon.id.clone();
+                    let bus_name     = icon.bus_name.clone();
+                    let menu_path    = icon.menu_path.clone();
+                    let indicator    = self.layout.tray_indicator_color;
+                    let win_bg       = self.layout.win_bg;
+                    let tooltip      = icon.tooltip_title.clone();
+                    let action_key   = format!("tray_menu_action_{icon_id}");
+                    let theme_menu   = Arc::clone(&self.theme);
 
                     if !menu_loaded { ctx.request_repaint(); }
 
                     let item_count = menu_items.iter().filter(|i| !i.is_separator).count();
                     let win_h      = (item_count as f32 * 28.0 + 32.0).clamp(60.0, 400.0);
-
-                    let viewport_id = egui::ViewportId::from_hash_of(format!("tray_menu_{}", icon_id));
-                    let viewport    = egui::ViewportBuilder::default()
-                        .with_title(if tooltip.is_empty() { "Menu".to_string() } else { tooltip })
+                    let vp_id      = tray_menu_vp_id(&icon_id);
+                    let viewport   = egui::ViewportBuilder::default()
+                        .with_title(if tooltip.is_empty() { "Menu".into() } else { tooltip })
                         .with_inner_size([180.0_f32, win_h])
-                        .with_resizable(false)
-                        .with_transparent(true)
-                        .with_always_on_top();
+                        .with_resizable(false).with_transparent(true).with_always_on_top();
 
-                    ctx.show_viewport_immediate(viewport_id, viewport, move |ctx, _| {
-                        let action_key = format!("tray_menu_action_{}", icon_id);
+                    ctx.show_viewport_immediate(vp_id, viewport, move |ctx, _| {
+                        let action_key = format!("tray_menu_action_{icon_id}");
+                        #[allow(deprecated)]
                         egui::CentralPanel::default()
                             .frame(egui::Frame::NONE.fill(win_bg))
                             .show(ctx, |ui| {
@@ -1273,15 +1442,16 @@ impl EframeWrapper {
                             });
                     });
 
-                    if let Some(item_id) = ctx.data_mut(|d| d.get_temp::<i32>(egui::Id::new(&action_key))) {
+                    let ak_id = egui::Id::new(&action_key);
+                    if let Some(item_id) = ctx.data_mut(|d| d.get_temp::<i32>(ak_id)) {
                         if item_id >= 0 {
                             if let (Some(host), Some(mp)) = (&self.sni_host, &menu_path) {
                                 host.menu_event(&bus_name, mp, item_id);
                             }
                         }
                         self.tray_menu_open = None;
-                        ctx.data_mut(|d| d.remove::<i32>(egui::Id::new(&action_key)));
-                        ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::Close);
+                        ctx.data_mut(|d| d.remove::<i32>(ak_id));
+                        ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Close);
                     }
                 }
             }
@@ -1301,16 +1471,13 @@ impl EframeWrapper {
     }
 }
 
-/// Resolve a freedesktop icon name to an absolute file path by searching the
-/// full XDG icon theme hierarchy.
-fn resolve_tray_icon_name(
-    name:           &str,
-    app_theme_path: Option<&str>,
-    config:         &Config,
-) -> Option<String> {
+// ============================================================================
+// Tray icon name resolution
+// ============================================================================
+
+fn resolve_tray_icon_name(name: &str, app_theme_path: Option<&str>, config: &Config) -> Option<String> {
     if name.is_empty() { return None; }
 
-    // If the name looks like an absolute path that already exists, use it directly.
     if name.starts_with('/') {
         if std::path::Path::new(name).exists() { return Some(name.to_string()); }
         for ext in &["png", "svg", "xpm"] {
@@ -1319,69 +1486,96 @@ fn resolve_tray_icon_name(
         }
     }
 
-    let exts   = ["png", "svg", "xpm"];
-    let sizes   = ["256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "22x22", "16x16", "scalable"];
-    let cats    = ["apps", "status", "devices", "actions", "categories", "emblems", "mimetypes", "places"];
-    let themes  = ["hicolor", "Papirus", "Papirus-Dark", "Papirus-Light",
-                   "Adwaita", "breeze", "breeze-dark", "gnome", "locolor",
-                   "oxygen", "Tango", "elementary", "Humanity"];
+    const EXTS:   &[&str] = &["png", "svg", "xpm"];
+    const SIZES:  &[&str] = &["256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "22x22", "16x16", "scalable"];
+    const CATS:   &[&str] = &["apps", "status", "devices", "actions", "categories", "emblems", "mimetypes", "places"];
+    const THEMES: &[&str] = &[
+        "hicolor", "Papirus", "Papirus-Dark", "Papirus-Light",
+        "Adwaita", "breeze", "breeze-dark", "gnome", "locolor",
+        "oxygen", "Tango", "elementary", "Humanity",
+    ];
 
-    // Try the exact name plus common suffix-stripped variants.
-    // e.g. "audio-volume-medium-panel" → also try "audio-volume-medium".
+    // Also try suffix-stripped variants (e.g. "audio-volume-medium-panel" → "audio-volume-medium").
     let stripped = name.strip_suffix("-panel")
         .or_else(|| name.strip_suffix("-symbolic"))
         .or_else(|| name.strip_suffix("-rtl"))
         .or_else(|| name.strip_suffix("-ltr"));
-    let candidates: Vec<&str> = std::iter::once(name)
-        .chain(stripped.into_iter())
-        .collect();
+    let candidates: Vec<&str> = std::iter::once(name).chain(stripped).collect();
 
-    // Build the list of base dirs to search, in priority order.
     let mut base_dirs: Vec<std::path::PathBuf> = Vec::new();
-    if let Some(p) = app_theme_path { base_dirs.push(std::path::PathBuf::from(p)); }
+    if let Some(p) = app_theme_path { base_dirs.push(p.into()); }
     if let Some(home) = std::env::var_os("HOME") {
-        let home = std::path::Path::new(&home);
-        base_dirs.push(home.join(".local/share/icons"));
-        base_dirs.push(home.join(".icons"));
+        let h = std::path::Path::new(&home);
+        base_dirs.push(h.join(".local/share/icons"));
+        base_dirs.push(h.join(".icons"));
     }
-    base_dirs.push(std::path::PathBuf::from("/usr/share/icons"));
-    base_dirs.push(std::path::PathBuf::from("/usr/local/share/icons"));
+    base_dirs.push("/usr/share/icons".into());
+    base_dirs.push("/usr/local/share/icons".into());
 
     for candidate in &candidates {
         for base in &base_dirs {
-            for theme in &themes {
-                for size in &sizes {
-                    for cat in &cats {
-                        for ext in &exts {
+            for theme in THEMES {
+                for size in SIZES {
+                    for cat in CATS {
+                        for ext in EXTS {
                             let p = base.join(theme).join(size).join(cat).join(format!("{candidate}.{ext}"));
                             if p.exists() { return Some(p.to_string_lossy().into_owned()); }
                         }
                     }
-                    // Also try without category sub-dir.
-                    for ext in &exts {
+                    for ext in EXTS {
                         let p = base.join(theme).join(size).join(format!("{candidate}.{ext}"));
                         if p.exists() { return Some(p.to_string_lossy().into_owned()); }
                     }
                 }
             }
-            // Flat root of base dir.
-            for ext in &exts {
+            for ext in EXTS {
                 let p = base.join(format!("{candidate}.{ext}"));
                 if p.exists() { return Some(p.to_string_lossy().into_owned()); }
             }
         }
-        // Pixmaps fallback.
-        for ext in &exts {
+        for ext in EXTS {
             let p = format!("/usr/share/pixmaps/{candidate}.{ext}");
             if std::path::Path::new(&p).exists() { return Some(p); }
         }
     }
-
-    // App-launcher helper (handles icon DB / .desktop cross-reference).
-    crate::app_launcher::resolve_icon_path(name, name, config)
+    resolve_icon_path(name, name, config)
 }
 
-/// Recursively render DBusMenu items; returns the clicked item id if any.
+// ============================================================================
+// DBusMenu rendering
+// ============================================================================
+
+/// Colors/styles parsed once per render_menu_items call, shared across all items.
+struct MenuStyle {
+    bg_normal:  eframe::egui::Color32,
+    bg_hover:   eframe::egui::Color32,
+    tc_normal:  eframe::egui::Color32,
+    tc_disabled: eframe::egui::Color32,
+    rounding:   eframe::egui::CornerRadius,
+    font_id:    eframe::egui::FontId,
+}
+
+impl MenuStyle {
+    fn from_theme(theme: &Theme, ui: &eframe::egui::Ui) -> Self {
+        let bg_normal = theme.get("app-button", "background-color")
+            .and_then(|s| theme.parse_color(&s))
+            .unwrap_or(eframe::egui::Color32::from_rgb(122, 162, 247));
+        let bg_hover = theme.get("app-button", "background-color-hover")
+            .and_then(|s| theme.parse_color(&s)).unwrap_or(bg_normal);
+        let tc_normal = theme.get("app-button", "color")
+            .and_then(|s| theme.parse_color(&s)).unwrap_or(eframe::egui::Color32::WHITE);
+        let tc_disabled = eframe::egui::Color32::from_rgba_unmultiplied(
+            tc_normal.r(), tc_normal.g(), tc_normal.b(), 100,
+        );
+        let rounding = theme.get("app-button", "border-radius")
+            .and_then(|s| s.replace("px", "").parse::<f32>().ok())
+            .map(|v| eframe::egui::CornerRadius::same(v as u8))
+            .unwrap_or_default();
+        let font_id = ui.style().text_styles.get(&eframe::egui::TextStyle::Button).cloned().unwrap_or_default();
+        MenuStyle { bg_normal, bg_hover, tc_normal, tc_disabled, rounding, font_id }
+    }
+}
+
 fn render_menu_items(
     ui:        &mut eframe::egui::Ui,
     items:     &[crate::sni::MenuItem],
@@ -1389,90 +1583,47 @@ fn render_menu_items(
     theme:     &Theme,
 ) -> Option<i32> {
     use eframe::egui;
+    let style   = MenuStyle::from_theme(theme, ui);
     let mut clicked = None;
 
-    // Pre-fetch app-button colors once for all items in this call.
-    let bg_normal = theme.get("app-button", "background-color")
-        .and_then(|s| theme.parse_color(&s))
-        .unwrap_or(egui::Color32::from_rgb(122, 162, 247));
-    let bg_hover = theme.get("app-button", "background-color-hover")
-        .and_then(|s| theme.parse_color(&s))
-        .unwrap_or(bg_normal);
-    let tc_normal = theme.get("app-button", "color")
-        .and_then(|s| theme.parse_color(&s))
-        .unwrap_or(egui::Color32::WHITE);
-    // Disabled text: same color but semi-transparent.
-    let tc_disabled = egui::Color32::from_rgba_unmultiplied(
-        tc_normal.r(), tc_normal.g(), tc_normal.b(), 100,
-    );
-    let rounding = theme.get("app-button", "border-radius")
-        .and_then(|s| s.replace("px", "").parse::<f32>().ok())
-        .map(|v| egui::CornerRadius::same(v as u8))
-        .unwrap_or_default();
-    let font_id = ui.style().text_styles
-        .get(&egui::TextStyle::Button).cloned().unwrap_or_default();
-
     for item in items {
-        if item.is_separator {
-            ui.separator();
-            continue;
-        }
+        if item.is_separator { ui.separator(); continue; }
         if item.label.is_empty() { continue; }
 
         let avail_w = ui.available_width();
 
         if item.children.is_empty() {
-            // ── Leaf item (enabled or disabled) ──────────────────────────────
-            let galley = ui.painter().layout_no_wrap(
-                item.label.clone(), font_id.clone(), egui::Color32::WHITE,
-            );
-            let h    = galley.size().y + ui.spacing().button_padding.y * 2.0;
-            let size = egui::vec2(avail_w, h);
-            let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+            let galley = ui.painter().layout_no_wrap(item.label.clone(), style.font_id.clone(), egui::Color32::WHITE);
+            let h      = galley.size().y + ui.spacing().button_padding.y * 2.0;
+            let (rect, response) = ui.allocate_exact_size(egui::vec2(avail_w, h), egui::Sense::click());
 
             if ui.is_rect_visible(rect) {
                 let hovered = response.hovered() && item.enabled;
-                let bg = if hovered { bg_hover } else { bg_normal };
-                let tc = if item.enabled { tc_normal } else { tc_disabled };
-
-                ui.painter().rect_filled(rect, rounding, bg);
+                ui.painter().rect_filled(rect, style.rounding, if hovered { style.bg_hover } else { style.bg_normal });
                 ui.painter().text(
                     egui::pos2(rect.min.x + ui.spacing().button_padding.x, rect.center().y),
                     egui::Align2::LEFT_CENTER,
-                    &item.label, font_id.clone(), tc,
+                    &item.label, style.font_id.clone(),
+                    if item.enabled { style.tc_normal } else { style.tc_disabled },
                 );
             }
-            if response.clicked() && item.enabled {
-                clicked = Some(item.id);
-            }
-
+            if response.clicked() && item.enabled { clicked = Some(item.id); }
         } else {
-            // ── Submenu with custom hand-drawn collapsible header ─────────────
-            // CollapsingHeader ignores bg_fill overrides, so we draw it ourselves.
             let open_key = egui::Id::new(("tray_submenu", &item.label, item.id));
             let is_open: bool = ui.ctx().data(|d| d.get_temp(open_key).unwrap_or(false));
-
-            let arrow = if is_open { "▼ " } else { "▶ " };
-            let header_label = format!("{}{}", arrow, item.label);
-            let galley = ui.painter().layout_no_wrap(
-                header_label.clone(), font_id.clone(), egui::Color32::WHITE,
-            );
-            let h    = galley.size().y + ui.spacing().button_padding.y * 2.0;
-            let size = egui::vec2(avail_w, h);
-            let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+            let header = format!("{} {}", if is_open { "▼" } else { "▶" }, item.label);
+            let galley = ui.painter().layout_no_wrap(header.clone(), style.font_id.clone(), egui::Color32::WHITE);
+            let h      = galley.size().y + ui.spacing().button_padding.y * 2.0;
+            let (rect, response) = ui.allocate_exact_size(egui::vec2(avail_w, h), egui::Sense::click());
 
             if ui.is_rect_visible(rect) {
-                let bg = if response.hovered() { bg_hover } else { bg_normal };
-                ui.painter().rect_filled(rect, rounding, bg);
+                ui.painter().rect_filled(rect, style.rounding, if response.hovered() { style.bg_hover } else { style.bg_normal });
                 ui.painter().text(
                     egui::pos2(rect.min.x + ui.spacing().button_padding.x, rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    &header_label, font_id.clone(), tc_normal,
+                    egui::Align2::LEFT_CENTER, &header, style.font_id.clone(), style.tc_normal,
                 );
             }
-            if response.clicked() {
-                ui.ctx().data_mut(|d| d.insert_temp(open_key, !is_open));
-            }
+            if response.clicked() { ui.ctx().data_mut(|d| d.insert_temp(open_key, !is_open)); }
 
             if is_open {
                 ui.indent(open_key, |ui| {
@@ -1483,46 +1634,42 @@ fn render_menu_items(
             }
         }
     }
-
     clicked
 }
 
+// ============================================================================
+// eframe::App
+// ============================================================================
+
 impl eframe::App for EframeWrapper {
-    fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         self.app.update();
 
-        // Read volume from the Arc<Mutex<f32>> kept by the polling thread.
-        // The old code called update_volume() here, which spawned a `wpctl` subprocess every frame.
         if self.config.enable_audio_control {
             self.current_volume = self.audio_controller.get_volume();
         }
 
-        // Refresh the clock string at most once per second – the display only changes by the minute.
         if self.config.show_time && self.last_time_update.elapsed() >= Duration::from_secs(1) {
-            self.cached_time     = self.app.get_time();
+            self.cached_time      = self.app.get_time();
             self.last_time_update = Instant::now();
         }
 
-        // Read all keyboard state in one input closure instead of two.
         let (esc, enter) = ctx.input(|i| (
             i.key_pressed(eframe::egui::Key::Escape),
             i.key_pressed(eframe::egui::Key::Enter),
         ));
 
-        // ----------------------------------------------------------------
-        // Main window
-        // ----------------------------------------------------------------
         let (w, h) = (self.layout.win_size.x, self.layout.win_size.y);
         let bg     = self.layout.win_bg;
         let rect   = eframe::egui::Rect::from_min_size(eframe::egui::pos2(0.0, 0.0), eframe::egui::vec2(w, h));
 
-        eframe::egui::Area::new("main".into()).fixed_pos(eframe::egui::pos2(0.0, 0.0)).show(ctx, |ui| {
+        eframe::egui::Area::new("main".into()).fixed_pos(eframe::egui::pos2(0.0, 0.0)).show(&ctx, |ui| {
             ui.set_min_size(eframe::egui::vec2(w, h));
             ui.set_max_size(eframe::egui::vec2(w, h));
 
-            // Draw background. BgImage.path is already resolved – no per-frame APP_CACHE lock.
             if let Some(ref bgi) = self.layout.bg_image {
-                if let Some(tex) = self.icon_manager.get_texture(ctx, &bgi.path) {
+                if let Some(tex) = self.icon_manager.get_texture(&ctx, &bgi.path) {
                     let img_size = tex.size_vec2();
                     let (draw_rect, uv) = match bgi.size_mode.as_str() {
                         "fit" => {
@@ -1540,8 +1687,7 @@ impl eframe::App for EframeWrapper {
                             let uv_max   = eframe::egui::Pos2::new(1.0 - offset.x / new_size.x, 1.0 - offset.y / new_size.y);
                             (rect, eframe::egui::Rect::from_min_max(uv_min, uv_max))
                         }
-                        _ => (rect, eframe::egui::Rect::from_min_max(
-                            eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0))),
+                        _ => (rect, eframe::egui::Rect::from_min_max(eframe::egui::Pos2::ZERO, eframe::egui::Pos2::new(1.0, 1.0))),
                     };
                     let tint = eframe::egui::Color32::from_white_alpha((bgi.opacity * 255.0) as u8);
                     ui.painter().image(tex.id(), draw_rect, uv, tint);
@@ -1552,8 +1698,6 @@ impl eframe::App for EframeWrapper {
                 ui.painter().rect_filled(rect, 0.0, bg);
             }
 
-            // Copy section data to plain locals before the loop so the borrow on
-            // self.layout ends before the closure that calls self.render_section.
             let sections: Vec<(&'static str, Option<(f32, f32)>, Option<eframe::egui::Vec2>)> =
                 self.layout.sections.iter().map(|s| (s.name, s.pos, s.size)).collect();
 
@@ -1566,42 +1710,29 @@ impl eframe::App for EframeWrapper {
                     eframe::egui::Area::new(name.to_owned().into())
                         .order(eframe::egui::Order::Foreground)
                 };
-
-                area.show(ctx, |ui| {
-                    if let Some(sz) = size {
-                        ui.set_min_size(sz);
-                        ui.set_max_size(sz);
-                    }
-                    self.render_section(ui, name, ctx);
+                area.show(&ctx, |ui| {
+                    if let Some(sz) = size { ui.set_min_size(sz); ui.set_max_size(sz); }
+                    self.render_section(ui, name, &ctx);
                 });
             }
         });
 
-        // ----------------------------------------------------------------
         // Editing windows (env-vars popup)
-        // ----------------------------------------------------------------
         let mut to_remove = Vec::new();
 
         for (app_name, opts) in self.editing_windows.iter() {
-            // Use cached popup dimensions – no per-frame theme lookups.
-            let win_bg  = self.layout.win_bg;
-            let env_w   = self.layout.env_w;
-            let env_h   = self.layout.env_h;
-
+            let (win_bg, env_w, env_h) = (self.layout.win_bg, self.layout.env_w, self.layout.env_h);
             let app_clone   = app_name.clone();
             let opts_clone  = opts.clone();
             let theme_clone = Arc::clone(&self.theme);
-
-            let viewport_id = eframe::egui::ViewportId::from_hash_of(format!("env_{}", app_name));
-            let viewport = eframe::egui::ViewportBuilder::default()
+            let vp_id       = eframe::egui::ViewportId::from_hash_of(format!("env_{app_name}"));
+            let viewport    = eframe::egui::ViewportBuilder::default()
                 .with_title(app_name.clone())
                 .with_inner_size([env_w, env_h])
-                .with_resizable(false)
-                .with_transparent(true)
-                .with_always_on_top();
+                .with_resizable(false).with_transparent(true).with_always_on_top();
 
-            let mem_key    = format!("env_opts_{}", app_name);
-            let action_key = format!("env_action_{}", app_name);
+            let mem_key    = format!("env_opts_{app_name}");
+            let action_key = format!("env_action_{app_name}");
 
             let current_opts = ctx.data_mut(|d| {
                 d.get_persisted::<String>(eframe::egui::Id::new(&mem_key))
@@ -1609,8 +1740,8 @@ impl eframe::App for EframeWrapper {
             });
 
             if current_opts != opts_clone {
-                let stored_app_key = format!("env_app_{}", app_name);
-                let stored_app     = ctx.data_mut(|d| d.get_persisted::<String>(eframe::egui::Id::new(&stored_app_key)));
+                let stored_app_key = format!("env_app_{app_name}");
+                let stored_app = ctx.data_mut(|d| d.get_persisted::<String>(eframe::egui::Id::new(&stored_app_key)));
                 if stored_app.as_ref() != Some(&app_clone) {
                     ctx.data_mut(|d| {
                         d.insert_persisted(eframe::egui::Id::new(&mem_key),        opts_clone.clone());
@@ -1619,15 +1750,14 @@ impl eframe::App for EframeWrapper {
                 }
             }
 
-            ctx.show_viewport_immediate(viewport_id, viewport, move |ctx, _| {
-                let mem_key    = format!("env_opts_{}", app_clone);
-                let action_key = format!("env_action_{}", app_clone);
-
+            ctx.show_viewport_immediate(vp_id, viewport, move |ctx, _| {
+                let mem_key    = format!("env_opts_{app_clone}");
+                let action_key = format!("env_action_{app_clone}");
                 let mut opts = ctx.data_mut(|d| {
                     d.get_persisted::<String>(eframe::egui::Id::new(&mem_key))
                         .unwrap_or_else(|| opts_clone.clone())
                 });
-
+                #[allow(deprecated)]
                 eframe::egui::CentralPanel::default()
                     .frame(eframe::egui::Frame::NONE.fill(win_bg))
                     .show(ctx, |ui| {
@@ -1650,38 +1780,31 @@ impl eframe::App for EframeWrapper {
                                 }
                             });
                         });
-
                         if ctx.input(|i| i.key_pressed(eframe::egui::Key::Escape)) {
                             ctx.data_mut(|d| d.insert_temp(eframe::egui::Id::new(&action_key), "cancel".to_string()));
                         }
                     });
-
                 ctx.data_mut(|d| d.insert_persisted(eframe::egui::Id::new(&mem_key), opts));
             });
 
-            // Unified save/cancel teardown – previously duplicated in two separate branches.
             if let Some(action) = ctx.data_mut(|d| d.get_temp::<String>(eframe::egui::Id::new(&action_key))) {
                 if action == "save" {
                     let final_opts = ctx.data_mut(|d| {
-                        d.get_persisted::<String>(eframe::egui::Id::new(&mem_key))
-                            .unwrap_or_else(|| opts.clone())
+                        d.get_persisted::<String>(eframe::egui::Id::new(&mem_key)).unwrap_or_else(|| opts.clone())
                     });
                     self.app.handle_input(&format!("LAUNCH_OPTIONS:{}:{}", app_name, final_opts));
                 }
-                // Both save and cancel share the same cleanup path.
                 to_remove.push(app_name.clone());
                 ctx.data_mut(|d| {
                     d.remove::<String>(eframe::egui::Id::new(&mem_key));
                     d.remove::<String>(eframe::egui::Id::new(&action_key));
-                    d.remove::<String>(eframe::egui::Id::new(&format!("env_app_{}", app_name)));
+                    d.remove::<String>(eframe::egui::Id::new(&format!("env_app_{app_name}")));
                 });
-                ctx.send_viewport_cmd_to(viewport_id, eframe::egui::ViewportCommand::Close);
+                ctx.send_viewport_cmd_to(vp_id, eframe::egui::ViewportCommand::Close);
             }
         }
-
         for app_name in to_remove { self.editing_windows.remove(&app_name); }
 
-        // Keyboard events were read at the top of update() in a single input closure.
         if esc   && self.editing_windows.is_empty() { self.app.handle_input("ESC"); }
         if enter && self.editing_windows.is_empty() { self.app.handle_input("ENTER"); }
         if self.app.should_quit() { ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close); }

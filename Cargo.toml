@@ -19,25 +19,51 @@ strip = true
 
 [dependencies]
 serde = { version = "1.0", default-features = false, features = ["derive", "std"] }
-# once_cell removed — use std::sync::LazyLock (stable since Rust 1.80)
-
-# Time handling
-time = { version = "0.3", default-features = false, features = ["std", "formatting", "macros", "local-offset", "parsing"] }
 
 # GUI
-egui = { version = "0.33", default-features = false, features = ["default_fonts"] }
-eframe = { version = "0.33", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
+# wgpu renderer: GPU-agnostic (Vulkan → Metal → DX12 → GL fallback via wgpu itself).
+# Removes glutin + glow + EGL/GLX context management — the display-stack-specific
+# OpenGL loader chain that glow required.
+#
+# Both wayland and x11 are kept so winit selects the display stack at runtime
+# ($WAYLAND_DISPLAY → Wayland, $DISPLAY → X11/XWayland) — zero code changes needed
+# to switch stacks. Without glow, these features now only propagate to winit and
+# egui-wgpu; the glutin?/glx, glutin?/wayland sub-features are gone entirely.
+egui   = { version = "0.34", default-features = false, features = ["default_fonts"] }
+eframe = { version = "0.34", default-features = false, features = ["wgpu", "default_fonts", "wayland", "x11"] }
 
-# Image support — bmp/tiff removed: only png/jpg/jpeg/ico/svg are in the icon search paths
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "ico"] }
+# Image support — replaced `image` crate (pulls in color_quant, bytemuck, num-traits etc.)
+# png/ico for app icons; image is already compiled by arboard→egui-winit so
+# declaring it here costs zero new crates — jpeg support via image avoids the
+# heavier standalone jpeg-decoder + byteorder-lite deps.
+png   = { version = "0.18", default-features = false }
+ico   = { version = "0.5",  default-features = false }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
-# SVG support — "text" feature removed: app/system icons are path-only SVGs, no <text> elements
-# Add "text" back if you ever see broken icon rendering
-resvg = { version = "0.45", default-features = false }
+# wgpu backend features — eframe declares wgpu with default-features=false (only "std"),
+# so no GPU backend is compiled in unless we unify features here at the top level.
+#
+# vulkan: primary Linux backend; works on both X11 and Wayland via raw-window-handle.
+#         Display-stack agnostic at compile time — surface creation goes through winit's
+#         RawWindowHandle; wgpu loads Vulkan extensions (KHR_wayland_surface /
+#         KHR_xlib_surface) at runtime from the driver, no compile-time platform deps.
+#         Mesa lavapipe provides a software-Vulkan fallback for hardware without drivers.
+#
+# gles omitted: would pull in khronos-egl + the GLES HAL, which requires EGL platform
+#         surface creation (wl_egl_window on Wayland, X11 EGL on X11) — more display-stack
+#         coupling than Vulkan for negligible practical benefit on modern Linux.
+#
+# wgsl: shader language used by egui's internal render pipelines.
+wgpu = { version = "29", default-features = false, features = ["vulkan", "wgsl"] }
 
-# SNI (StatusNotifierItem) tray host — D-Bus via zbus with tokio async executor
-zbus  = { version = "4", default-features = false, features = ["tokio"] }
+# SVG support — hand-rolled rasterizer; no font stack, no C code
+tiny-skia  = { version = "0.12", default-features = false, features = ["std"] }
+
+# SNI tray host — D-Bus via zbus + tokio
+zbus  = { version = "5", default-features = false, features = ["tokio"] }
 tokio = { version = "1", default-features = false, features = ["rt", "time", "net", "sync"] }
-
-# futures-util: "sink" removed — only StreamExt / stream combinators are used in sni.rs
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
+# libc for local-time (already transitive via zbus→nix→libc; explicit here for direct use).
+# Replaces the `time` crate (time, time-core, time-macros, deranged, powerfmt, num-conv).
+libc = "0.2"
