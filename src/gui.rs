@@ -1263,10 +1263,20 @@ impl EframeWrapper {
         }
         let (strip_rect, _) = ui.allocate_exact_size(egui::vec2(tray_w, tray_h), egui::Sense::hover());
 
+        // NOTE: per the SNI spec, Status="Passive" technically means "the host may
+        // hide this", but in practice the vast majority of real tray apps (the
+        // NetworkManager applet, plus many libappindicator/KStatusNotifierItem-based
+        // icons -- EasyEffects, assorted volume-control trays, etc.) report Passive
+        // as their default or permanent status while still fully expecting to be
+        // shown. Even KDE's own Plasma systray doesn't hard-hide Passive items, it
+        // only collapses them into an "expand for more" overflow area. Filtering
+        // them out here made those icons disappear entirely, so every discovered
+        // item is now shown regardless of status; `status` is still used below to
+        // pick the "needs attention" icon variant.
         let icons: Vec<crate::sni::TrayIcon> = self.sni_host
             .as_ref()
-            .and_then(|h| h.items.try_lock().ok())
-            .map(|g| g.iter().filter(|i| i.status != crate::sni::TrayStatus::Passive).cloned().collect())
+            .and_then(|h| h.items.lock().ok())
+            .map(|g| g.iter().cloned().collect())
             .unwrap_or_default();
 
         if icons.is_empty() {
@@ -1318,7 +1328,14 @@ impl EframeWrapper {
                     let cache_key = format!("{}|{}", name, icon.icon_theme_path.as_deref().unwrap_or(""));
                     let resolved  = self.tray_name_cache
                         .entry(cache_key)
-                        .or_insert_with(|| resolve_tray_icon_name(name, icon.icon_theme_path.as_deref(), &self.config))
+                        .or_insert_with(|| {
+                            resolve_tray_icon_name(name, icon.icon_theme_path.as_deref(), &self.config)
+                                .map(|p| if p.starts_with('/') {
+                                    std::fs::canonicalize(&p)
+                                        .map(|r| r.to_string_lossy().into_owned())
+                                        .unwrap_or(p)
+                                } else { p })
+                        })
                         .as_deref();
                     if let Some(path) = resolved {
                         if let Some(tex) = self.icon_manager.get_texture(ctx, path) {
@@ -1396,62 +1413,71 @@ impl EframeWrapper {
                 }
 
                 if icon.menu_path.is_some() {
-                    let menu_items   = icon.menu_items.clone();
-                    let menu_loaded  = icon.menu_loaded;
-                    let icon_id      = icon.id.clone();
-                    let bus_name     = icon.bus_name.clone();
-                    let menu_path    = icon.menu_path.clone();
-                    let indicator    = self.layout.tray_indicator_color;
-                    let win_bg       = self.layout.win_bg;
-                    let tooltip      = icon.tooltip_title.clone();
-                    let action_key   = format!("tray_menu_action_{icon_id}");
-                    let theme_menu   = Arc::clone(&self.theme);
+                    let menu_loaded = icon.menu_loaded;
 
-                    if !menu_loaded { ctx.request_repaint(); }
+                    if !menu_loaded {
+                        // Don't create the popup window until we know how many items it
+                        // actually needs to hold. Sizing it from an empty/stale item list
+                        // (because the async GetLayout fetch hasn't completed yet) and
+                        // resizing later isn't reliably honored on every backend
+                        // (XWayland in particular) -- that's what caused the "opens too
+                        // small until you right-click again" bug: by the second click the
+                        // menu had already finished loading in the background, so it
+                        // happened to size correctly right from the start.
+                        ctx.request_repaint();
+                    } else {
+                        let menu_items   = icon.menu_items.clone();
+                        let icon_id      = icon.id.clone();
+                        let bus_name     = icon.bus_name.clone();
+                        let menu_path    = icon.menu_path.clone();
+                        let indicator    = self.layout.tray_indicator_color;
+                        let win_bg       = self.layout.win_bg;
+                        let tooltip      = icon.tooltip_title.clone();
+                        let action_key   = format!("tray_menu_action_{icon_id}");
+                        let theme_menu   = Arc::clone(&self.theme);
 
-                    let item_count = menu_items.iter().filter(|i| !i.is_separator).count();
-                    let win_h      = (item_count as f32 * 28.0 + 32.0).clamp(60.0, 400.0);
-                    let vp_id      = tray_menu_vp_id(&icon_id);
-                    let viewport   = egui::ViewportBuilder::default()
-                        .with_title(if tooltip.is_empty() { "Menu".into() } else { tooltip })
-                        .with_inner_size([180.0_f32, win_h])
-                        .with_resizable(false).with_transparent(true).with_always_on_top();
+                        let item_count = menu_items.iter().filter(|i| !i.is_separator).count();
+                        let win_h      = (item_count as f32 * 28.0 + 32.0).clamp(60.0, 400.0);
+                        let vp_id      = tray_menu_vp_id(&icon_id);
+                        let viewport   = egui::ViewportBuilder::default()
+                            .with_title(if tooltip.is_empty() { "Menu".into() } else { tooltip })
+                            .with_inner_size([180.0_f32, win_h])
+                            .with_resizable(false).with_transparent(true).with_always_on_top();
 
-                    ctx.show_viewport_immediate(vp_id, viewport, move |ctx, _| {
-                        let action_key = format!("tray_menu_action_{icon_id}");
-                        #[allow(deprecated)]
-                        egui::CentralPanel::default()
-                            .frame(egui::Frame::NONE.fill(win_bg))
-                            .show(ctx, |ui| {
-                                ui.add_space(4.0);
-                                if !menu_loaded {
-                                    ui.add_enabled(false, egui::Label::new("Loading…"));
-                                } else if menu_items.is_empty() {
-                                    ui.add_enabled(false, egui::Label::new("No menu items"));
-                                } else {
-                                    let clicked = render_menu_items(ui, &menu_items, indicator, &theme_menu);
-                                    if let Some(item_id) = clicked {
-                                        ctx.data_mut(|d| d.insert_temp(egui::Id::new(&action_key), item_id));
+                        ctx.show_viewport_immediate(vp_id, viewport, move |ctx, _| {
+                            let action_key = format!("tray_menu_action_{icon_id}");
+                            #[allow(deprecated)]
+                            egui::CentralPanel::default()
+                                .frame(egui::Frame::NONE.fill(win_bg))
+                                .show(ctx, |ui| {
+                                    ui.add_space(4.0);
+                                    if menu_items.is_empty() {
+                                        ui.add_enabled(false, egui::Label::new("No menu items"));
+                                    } else {
+                                        let clicked = render_menu_items(ui, &menu_items, indicator, &theme_menu);
+                                        if let Some(item_id) = clicked {
+                                            ctx.data_mut(|d| d.insert_temp(egui::Id::new(&action_key), item_id));
+                                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                                        }
+                                    }
+                                    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                        ctx.data_mut(|d| d.insert_temp(egui::Id::new(&action_key), -1i32));
                                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                     }
-                                }
-                                if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                                    ctx.data_mut(|d| d.insert_temp(egui::Id::new(&action_key), -1i32));
-                                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                                }
-                            });
-                    });
+                                });
+                        });
 
-                    let ak_id = egui::Id::new(&action_key);
-                    if let Some(item_id) = ctx.data_mut(|d| d.get_temp::<i32>(ak_id)) {
-                        if item_id >= 0 {
-                            if let (Some(host), Some(mp)) = (&self.sni_host, &menu_path) {
-                                host.menu_event(&bus_name, mp, item_id);
+                        let ak_id = egui::Id::new(&action_key);
+                        if let Some(item_id) = ctx.data_mut(|d| d.get_temp::<i32>(ak_id)) {
+                            if item_id >= 0 {
+                                if let (Some(host), Some(mp)) = (&self.sni_host, &menu_path) {
+                                    host.menu_event(&bus_name, mp, item_id);
+                                }
                             }
+                            self.tray_menu_open = None;
+                            ctx.data_mut(|d| d.remove::<i32>(ak_id));
+                            ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Close);
                         }
-                        self.tray_menu_open = None;
-                        ctx.data_mut(|d| d.remove::<i32>(ak_id));
-                        ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Close);
                     }
                 }
             }
@@ -1486,51 +1512,110 @@ fn resolve_tray_icon_name(name: &str, app_theme_path: Option<&str>, config: &Con
         }
     }
 
-    const EXTS:   &[&str] = &["png", "svg", "xpm"];
-    const SIZES:  &[&str] = &["256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "22x22", "16x16", "scalable"];
-    const CATS:   &[&str] = &["apps", "status", "devices", "actions", "categories", "emblems", "mimetypes", "places"];
+    const EXTS:  &[&str] = &["png", "svg", "xpm"];
+    // Both "WxH" (hicolor/GNOME/Papirus) and bare-number (KDE Breeze/Oxygen)
+    // size-directory conventions, plus the two non-numeric special dirs.
+    const SIZES: &[&str] = &[
+        "256x256", "128x128", "64x64", "48x48", "32x32", "24x24", "22x22", "16x16",
+        "256", "128", "64", "48", "32", "24", "22", "16",
+        "scalable", "symbolic",
+    ];
+    const CATS: &[&str] = &[
+        "apps", "status", "devices", "actions", "categories",
+        "emblems", "mimetypes", "places", "panel", "notifications",
+    ];
+    // Tried even if not installed (a missing dir just fails an `exists()`
+    // check almost for free); actual theme dirs present on disk are also
+    // discovered dynamically below and take priority.
     const THEMES: &[&str] = &[
         "hicolor", "Papirus", "Papirus-Dark", "Papirus-Light",
         "Adwaita", "breeze", "breeze-dark", "gnome", "locolor",
         "oxygen", "Tango", "elementary", "Humanity",
+        "Yaru", "Numix", "Numix-Circle", "Arc", "Flat-Remix",
+        "WhiteSur", "Qogir", "Nordic", "Vimix", "McMojave-circle",
     ];
 
-    // Also try suffix-stripped variants (e.g. "audio-volume-medium-panel" → "audio-volume-medium").
+    // Also try suffix-stripped/appended variants:
+    //  - "...-panel" / "...-rtl" / "...-ltr" -> stripped (directional/panel variants)
+    //  - "...-symbolic" -> stripped, and conversely a bare name -> "...-symbolic"
+    //    appended, since modern Adwaita ships *only* "-symbolic" files (with the
+    //    suffix baked into the filename even inside the "symbolic" directory)
+    //    even though apps often report the bare name.
     let stripped = name.strip_suffix("-panel")
         .or_else(|| name.strip_suffix("-symbolic"))
         .or_else(|| name.strip_suffix("-rtl"))
         .or_else(|| name.strip_suffix("-ltr"));
-    let candidates: Vec<&str> = std::iter::once(name).chain(stripped).collect();
+    let mut candidates: Vec<String> = std::iter::once(name.to_string())
+        .chain(stripped.map(str::to_string))
+        .collect();
+    if !name.ends_with("-symbolic") {
+        candidates.push(format!("{name}-symbolic"));
+    }
 
-    let mut base_dirs: Vec<std::path::PathBuf> = Vec::new();
-    if let Some(p) = app_theme_path { base_dirs.push(p.into()); }
+    // Real icon-theme directory trees (as opposed to app_theme_path below,
+    // which is an app-specific flat dir, not a themed tree).
+    let mut theme_roots: Vec<std::path::PathBuf> = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
         let h = std::path::Path::new(&home);
-        base_dirs.push(h.join(".local/share/icons"));
-        base_dirs.push(h.join(".icons"));
+        theme_roots.push(h.join(".local/share/icons"));
+        theme_roots.push(h.join(".icons"));
     }
-    base_dirs.push("/usr/share/icons".into());
-    base_dirs.push("/usr/local/share/icons".into());
+    theme_roots.push("/usr/share/icons".into());
+    theme_roots.push("/usr/local/share/icons".into());
+
+    // Theme name candidates: whatever theme directories actually exist on
+    // disk (covers any theme regardless of name), unioned with the hardcoded
+    // list above as a safety net.
+    let mut themes: Vec<String> = Vec::new();
+    for root in &theme_roots {
+        if let Ok(rd) = std::fs::read_dir(root) {
+            for entry in rd.filter_map(Result::ok) {
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    if let Ok(n) = entry.file_name().into_string() { themes.push(n); }
+                }
+            }
+        }
+    }
+    for t in THEMES { themes.push(t.to_string()); }
+    themes.sort();
+    themes.dedup();
+
+    // Both directory-nesting conventions seen in the wild:
+    //  - size-then-category   (hicolor / GNOME / Papirus), "WxH" sizes
+    //  - category-then-size   (KDE Breeze / Oxygen), bare-number sizes
+    let mut subpaths: Vec<Vec<&str>> = Vec::new();
+    for size in SIZES {
+        for cat in CATS { subpaths.push(vec![size, cat]); }
+        subpaths.push(vec![size]);
+    }
+    for cat in CATS {
+        for size in SIZES { subpaths.push(vec![cat, size]); }
+    }
 
     for candidate in &candidates {
-        for base in &base_dirs {
-            for theme in THEMES {
-                for size in SIZES {
-                    for cat in CATS {
-                        for ext in EXTS {
-                            let p = base.join(theme).join(size).join(cat).join(format!("{candidate}.{ext}"));
-                            if p.exists() { return Some(p.to_string_lossy().into_owned()); }
-                        }
-                    }
+        // App-specific theme dir (e.g. Electron/Chromium's per-instance temp
+        // icon dir) is always a flat directory, never themed/sized.
+        if let Some(p) = app_theme_path {
+            for ext in EXTS {
+                let f = std::path::Path::new(p).join(format!("{candidate}.{ext}"));
+                if f.exists() { return Some(f.to_string_lossy().into_owned()); }
+            }
+        }
+        for root in &theme_roots {
+            for theme in &themes {
+                let theme_dir = root.join(theme);
+                for combo in &subpaths {
+                    let mut p = theme_dir.clone();
+                    for part in combo { p = p.join(*part); }
                     for ext in EXTS {
-                        let p = base.join(theme).join(size).join(format!("{candidate}.{ext}"));
-                        if p.exists() { return Some(p.to_string_lossy().into_owned()); }
+                        let f = p.join(format!("{candidate}.{ext}"));
+                        if f.exists() { return Some(f.to_string_lossy().into_owned()); }
                     }
                 }
             }
             for ext in EXTS {
-                let p = base.join(format!("{candidate}.{ext}"));
-                if p.exists() { return Some(p.to_string_lossy().into_owned()); }
+                let f = root.join(format!("{candidate}.{ext}"));
+                if f.exists() { return Some(f.to_string_lossy().into_owned()); }
             }
         }
         for ext in EXTS {
@@ -1538,7 +1623,54 @@ fn resolve_tray_icon_name(name: &str, app_theme_path: Option<&str>, config: &Con
             if std::path::Path::new(&p).exists() { return Some(p); }
         }
     }
+
+    // Last resort: a depth-bounded recursive search inside each theme
+    // directory, for layouts that still don't match either convention above
+    // (e.g. Oxygen's extra "base/" segment, or any theme we haven't seen).
+    // Only reached once the fast guesses above have all failed, and the
+    // result gets cached by the caller, so the cost is paid at most once per
+    // never-before-seen icon name.
+    for candidate in &candidates {
+        for root in &theme_roots {
+            for theme in &themes {
+                if let Some(p) = find_icon_recursive(&root.join(theme), candidate, EXTS, 5) {
+                    return Some(p);
+                }
+            }
+        }
+    }
+
     resolve_icon_path(name, name, config)
+}
+
+/// Depth-bounded recursive search for a file named `{candidate}.{ext}` (any of
+/// `exts`) under `dir`. Checks files at the current level before descending,
+/// so shallow matches are found quickly; `max_depth` bounds the cost (and
+/// guards against any pathological symlink structure) for deeper ones.
+fn find_icon_recursive(dir: &std::path::Path, candidate: &str, exts: &[&str], max_depth: u32) -> Option<String> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut subdirs = Vec::new();
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_dir() {
+            subdirs.push(path);
+            continue;
+        }
+        if path.file_stem().and_then(|s| s.to_str()) == Some(candidate) {
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if exts.contains(&ext) {
+                    return Some(path.to_string_lossy().into_owned());
+                }
+            }
+        }
+    }
+    if max_depth == 0 { return None; }
+    for sub in subdirs {
+        if let Some(found) = find_icon_recursive(&sub, candidate, exts, max_depth - 1) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 // ============================================================================

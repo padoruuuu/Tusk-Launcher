@@ -270,7 +270,23 @@ fn cache_app_metadata(app_name: &str, exec_cmd: &str, icon_path: &str) {
     if let Ok(mut cache) = APP_CACHE.lock() {
         let entry = get_or_create_entry(&mut cache, app_name);
         if entry.exec_command.is_none()                        { entry.exec_command     = Some(exec_cmd.to_string()); }
-        if entry.icon_path.is_none() && !icon_path.is_empty() { entry.icon_path         = Some(icon_path.to_string()); }
+        if entry.icon_path.is_none() && !icon_path.is_empty() {
+            // Canonicalize absolute paths so we never persist a symlink into the cache.
+            // Symlinks appear with flatpak/snap icon exports, LibreOffice, and anything
+            // installed outside /usr/share; storing the symlink rather than its real
+            // target means a package update that moves the target silently breaks every
+            // cached icon for that app. fs::canonicalize follows all symlinks and
+            // resolves `..` segments; if it fails (path doesn't exist yet, or a
+            // relative/bare name like "discord"), we fall back to the original string.
+            let resolved = if icon_path.starts_with('/') {
+                fs::canonicalize(icon_path)
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| icon_path.to_string())
+            } else {
+                icon_path.to_string()
+            };
+            entry.icon_path = Some(resolved);
+        }
         if entry.terminal_command.is_none() {
             if let Some(term_cmd) = extract_terminal_command(exec_cmd) {
                 entry.terminal_command = Some(term_cmd);
@@ -407,7 +423,29 @@ pub fn resolve_icon_path(app_name: &str, icon_name: &str, config: &crate::gui::C
 
     if let Some((cached_icon, _, _)) = get_cached_data(app_name) {
         if let Some(ref icon) = cached_icon {
-            if Path::new(icon).exists() { return Some(icon.clone()); }
+            let p = Path::new(icon);
+            if p.exists() {
+                // Heal pre-existing symlink entries written before this fix:
+                // resolve to the real path and re-save so the cache stays clean.
+                if p.is_symlink() {
+                    if let Ok(real) = fs::canonicalize(p) {
+                        let real_str = real.to_string_lossy().into_owned();
+                        if let Ok(mut cache) = APP_CACHE.lock() {
+                            if let Some(entry) = cache.apps.iter_mut()
+                                .find(|(n, _)| n == app_name).map(|(_, e)| e)
+                            {
+                                entry.icon_path = Some(real_str.clone());
+                            }
+                            let _ = save_cache(&cache);
+                        }
+                        return Some(real_str);
+                    }
+                    // Canonicalize failed — symlink is broken; fall through to fresh search.
+                } else {
+                    return Some(icon.clone());
+                }
+            }
+            // Path doesn't exist (stale cache entry); fall through to fresh search.
         }
     }
 

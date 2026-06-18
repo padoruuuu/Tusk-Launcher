@@ -296,7 +296,7 @@ async fn run_watcher(
         let all_names: Vec<String> = msg.body().deserialize().unwrap_or_default();
         for name in all_names.into_iter().filter(|n| n.starts_with(':')) {
             let c = conn.clone(); let i = Arc::clone(&items);
-            tokio::spawn(async move { scan_one_bus_name(&c, &name, i).await; });
+            tokio::spawn(async move { scan_one_bus_name_with_retries(&c, &name, i).await; });
         }
     }
 
@@ -338,7 +338,7 @@ async fn run_watcher(
                 if args.new_owner().is_some() {
                     if name.starts_with(':') {
                         let c = conn_w.clone(); let i = Arc::clone(&items_w);
-                        tokio::spawn(async move { scan_one_bus_name(&c, &name, i).await; });
+                        tokio::spawn(async move { scan_one_bus_name_with_retries(&c, &name, i).await; });
                     }
                 } else {
                     let prefix = format!("{name}/");
@@ -548,6 +548,23 @@ async fn scan_one_bus_name(conn: &Connection, bus_name: &str, items: TrayItems) 
             let svc = format!("{bus_name}{found_path}");
             fetch_and_watch(conn, &svc, Arc::clone(&items)).await;
         }
+    }
+}
+
+/// Like `scan_one_bus_name`, but retries a couple more times with backoff before
+/// giving up. A process showing up on `ListNames`/`NameOwnerChanged` and that same
+/// process finishing construction of its StatusNotifierItem object are two distinct
+/// moments -- plenty of GTK and Electron-based tray icons connect to the session bus
+/// well before their tray icon is actually ready. Probing only once, immediately when
+/// the connection appears, can run before the item exists and never gets reconsidered
+/// again. Re-probing shortly after catches these "late" icons; we stop as soon as the
+/// bus name has a known item so already-ready apps incur no extra delay or work.
+async fn scan_one_bus_name_with_retries(conn: &Connection, bus_name: &str, items: TrayItems) {
+    scan_one_bus_name(conn, bus_name, Arc::clone(&items)).await;
+    for delay_ms in [600u64, 2000] {
+        if items.lock().unwrap().iter().any(|i| i.bus_name == bus_name) { return; }
+        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        scan_one_bus_name(conn, bus_name, Arc::clone(&items)).await;
     }
 }
 
@@ -854,12 +871,15 @@ async fn fetch_icon(conn: &Connection, service: &str, items: TrayItems) -> bool 
 async fn fetch_menu_internal(
     conn: &Connection, bus_name: &str, menu_path: &str, service_id: &str, items: TrayItems,
 ) {
-    let result = conn.call_method(
+    let result = tokio::time::timeout(T_PROBE, conn.call_method(
         Some(bus_name), menu_path,
         Some("com.canonical.dbusmenu"), "GetLayout",
         &(0i32, -1i32, Vec::<String>::new()),
-    ).await;
-    let msg = match result { Ok(m) => m, Err(_) => { mark_menu_loaded(&items, service_id); return; } };
+    )).await;
+    let msg = match result {
+        Ok(Ok(m)) => m,
+        _         => { mark_menu_loaded(&items, service_id); return; }
+    };
 
     type MenuNodeRaw = (i32, HashMap<String, zbus::zvariant::OwnedValue>, Vec<zbus::zvariant::OwnedValue>);
     let (revision, root_node): (u32, MenuNodeRaw) = match msg.body().deserialize() {
